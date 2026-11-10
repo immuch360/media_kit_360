@@ -1,0 +1,28 @@
+name: media_kit_360_example
+description: "Plays a 360°, VR180 or 3D video with the packages of media_kit_360: drag the view, turn the wheel to zoom."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.7.0
+  flutter: ">=3.27.4"
+resolution: workspace
+
+# The packages of this repository: the workspace (the pubspec.yaml at its root) resolves them to their folders. An app
+# outside the repository takes them by git tag instead, as the README shows.
+dependencies:
+  flutter:
+    sdk: flutter
+  file_selector: ^1.0.3
+  media_kit: ^1.2.6
+  media_kit_libs_linux: ^1.2.1
+  media_kit_libs_windows_video: ^1.0.12
+  media_kit_video: ^2.0.1
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

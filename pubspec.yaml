@@ -11,3 +11,4 @@ workspace:
   - packages/media_kit_video
   - packages/media_kit_libs_linux
   - packages/media_kit_libs_windows_video
+  - example
