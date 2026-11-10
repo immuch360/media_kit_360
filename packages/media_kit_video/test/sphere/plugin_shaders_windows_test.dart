@@ -1,12 +1,17 @@
-// The passes of renderer C (packages/media_kit_video/windows/projection_shaders.h, IMMUCH360-NOTE.md patch 6) in
+// The passes of renderer C (windows/projection_shaders.h of this package, IMMUCH360-NOTE.md patch 6) in
 // the ANGLE of the Windows build, without a window: the sources are read from the header and put together as
 // ProjectionRenderer does, all three programs must compile and link in OpenGL ES 3.0, and the equirectangular pass
 // draws a synthetic frame (upper half red, lower half blue, the quarter ahead green) where the view looks: up is up,
 // the first row of the output is the top of the view, the yaw turns to the right, a VR180 crop is black behind.
-// Windows only, after a Windows build of the app (it holds libEGL.dll and libGLESv2.dll):
-//   flutter build windows --debug -t lib/main_desktop.dart
-//   flutter test test/desktop/video/plugin_shaders_windows_test.dart
-// IMMUCH360_BUILD_DIR may name another folder holding the two DLLs.
+// Windows only, after a Windows build of the example app (it holds libEGL.dll and libGLESv2.dll), from this package's
+// folder:
+//   (cd ../../example && flutter build windows --debug)
+//   flutter test test/sphere/plugin_shaders_windows_test.dart
+// MEDIA_KIT_360_BUILD_DIR may name another folder holding the two DLLs (the build folder of any app that depends on
+// media_kit_libs_windows_video).
+//
+// Moved here from the Immuch360 app (mobile/test/desktop/video/plugin_shaders_windows_test.dart of
+// github.com/freeKC/Immuch360).
 
 import 'dart:ffi';
 import 'dart:io';
@@ -18,10 +23,11 @@ import 'package:path/path.dart' as p;
 
 /// The folder of the Windows build that holds ANGLE, null when there is none
 String? _buildDir() {
-  final given = Platform.environment['IMMUCH360_BUILD_DIR'];
+  final given = Platform.environment['MEDIA_KIT_360_BUILD_DIR'];
   final candidates = [
     if (given != null && given.isNotEmpty) given,
-    for (final mode in ['Debug', 'Profile', 'Release']) p.join('build', 'windows', 'x64', 'runner', mode),
+    for (final mode in ['Debug', 'Profile', 'Release'])
+      p.join('..', '..', 'example', 'build', 'windows', 'x64', 'runner', mode),
   ];
   for (final dir in candidates) {
     if (File(p.join(dir, 'libEGL.dll')).existsSync() && File(p.join(dir, 'libGLESv2.dll')).existsSync()) {
@@ -33,7 +39,7 @@ String? _buildDir() {
 
 /// The GLSL constants of projection_shaders.h by name
 Map<String, String> _shaderSources() {
-  final header = File(p.join('packages', 'media_kit_video', 'windows', 'projection_shaders.h')).readAsStringSync();
+  final header = File(p.join('windows', 'projection_shaders.h')).readAsStringSync();
   return {
     for (final match in RegExp(
       r'constexpr const char\* (k\w+) = R"glsl\((.*?)\)glsl";',
@@ -263,7 +269,7 @@ void main() {
   final skip = !Platform.isWindows
       ? 'the ANGLE of the Windows build: Windows only'
       : buildDir == null
-      ? 'no Windows build with libEGL.dll (flutter build windows first, or set IMMUCH360_BUILD_DIR)'
+      ? 'no Windows build with libEGL.dll (flutter build windows of the example first, or set MEDIA_KIT_360_BUILD_DIR)'
       : false;
 
   late _Gles gl;

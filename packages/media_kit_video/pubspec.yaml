@@ -1,14 +1,16 @@
 name: media_kit_video
 description: Native implementation for video playback in package:media_kit.
-homepage: https://github.com/media-kit/media-kit
-repository: https://github.com/media-kit/media-kit
-# Copy of media_kit_video from github.com/media-kit/media-kit at c533e446755f51cf53c7e57aea873f2aa5355f81, used by
-# Immuch360 Desktop through dependency_overrides in mobile/pubspec.yaml; the changes are listed in IMMUCH360-NOTE.md
+homepage: https://immuch360.com
+repository: https://github.com/immuch360/media_kit_360
+# Fork of media_kit_video from github.com/media-kit/media-kit at c533e446755f51cf53c7e57aea873f2aa5355f81, with the
+# 360 renderer (renderer C) of Immuch360 Desktop; the changes are listed in IMMUCH360-NOTE.md. Not on pub.dev: apps
+# depend on it by git tag (see the README of the repository)
 publish_to: 'none'
 version: 2.0.1+immuch360
 environment:
   sdk: ^3.6.0
   flutter: ">=3.27.4"
+resolution: workspace
 
 topics:
   - video
@@ -23,11 +25,21 @@ dependencies:
 
   media_kit: ^1.2.6
 
+  # The log lines of the 360 renderer (lib/src/sphere)
+  logging: ^1.2.0
   plugin_platform_interface: ^2.1.8
   synchronized: ^3.3.0
   universal_platform: ^1.1.0
   wakelock_plus: ^1.3.0
   web: ^1.1.1
+
+dev_dependencies:
+  fake_async: ^1.3.1
+  ffi: ^2.1.0
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+  path: ^1.9.0
 
 flutter:
   plugin:

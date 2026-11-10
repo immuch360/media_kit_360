@@ -1,10 +1,13 @@
-// Renderer C of the 360 player (plugin_renderer.dart, DP1 of 2026-10-09): what the plugin is given, without the
-// plugin. The uniforms of the stitch from the rawProjection JSON, against the values RawStitchUniforms.kt computes
-// for the phones; the eye and the part of the sphere of each layout and coverage; the start tier per GPU, from what
-// DXGI says of the GPU in use when it is the one ANGLE draws on (an Intel Arc built into the processor is not a card),
-// else from its name; and the rules for the player: one view per Flutter frame however many events come, never a second view while the plugin has
-// not answered the first, the sharper filter once the view rests, window sizes merged, a tier change at most once a
-// second, mpv's keepaspect set and given back.
+// Renderer C of the 360 player (lib/src/sphere/plugin_renderer.dart, DP1 of 9 October 2026): what the plugin is
+// given, without the plugin. The uniforms of the stitch from the rawProjection JSON, against the values
+// RawStitchUniforms.kt computes for the phones; the eye and the part of the sphere of each layout and coverage; the
+// start tier per GPU, from what DXGI says of the GPU in use when it is the one ANGLE draws on (an Intel Arc built into
+// the processor is not a card), else from its name; and the rules for the player: one view per Flutter frame however
+// many events come, never a second view while the plugin has not answered the first, the sharper filter once the view
+// rests, window sizes merged, a tier change at most once a second, mpv's keepaspect set and given back.
+//
+// Moved here from the Immuch360 app (mobile/test/desktop/video/plugin_renderer_test.dart of
+// github.com/freeKC/Immuch360).
 
 import 'dart:async';
 import 'dart:convert';
@@ -12,13 +15,10 @@ import 'dart:math' as math;
 import 'dart:ui' show Size;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:immich_mobile/desktop/video/render/plugin_renderer.dart';
-import 'package:immich_mobile/domain/models/sphere_coverage.dart';
-import 'package:immich_mobile/domain/models/stereo_layout.dart';
-import 'package:immuch_desktop_video/immuch_desktop_video.dart';
-import 'package:media_kit_video/media_kit_video.dart';
+import 'package:media_kit_video/sphere.dart';
 
-// Example A of the projections design (an X3 file, both lenses side by side), as raw_video_plan_test.dart has it
+// Example A of the projections design of Immuch360 (an X3 file, both lenses side by side), as the app's
+// raw_video_plan_test.dart has it
 const _exampleA =
     '{"version":2,"kind":"dualFisheye","layout":"sideBySide","camera":"Insta360 X3","frameWidth":3840,'
     '"frameHeight":1920,"tracks":[{"file":0,"videoTrack":0,"trackId":1,"width":3840,"height":1920,"codec":"hvc1",'
@@ -55,13 +55,8 @@ const _nvidia = 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4060 Laptop GPU (0x000028E0) 
 // The GPU of a Core Ultra 7 155H (Meteor Lake), built into the processor
 const _arcIntegrated = 'ANGLE (Intel, Intel(R) Arc(TM) Graphics (0x00007D55) Direct3D11 vs_5_0 ps_5_0, D3D11)';
 
-GpuAdapter _adapter(String name, int deviceId, {required bool integrated}) => GpuAdapter.fromJson({
-  'name': name,
-  'vendorId': 0x8086,
-  'deviceId': deviceId,
-  'integrated': integrated,
-  'dedicatedMB': integrated ? 128 : 16384,
-});
+PluginGpu _adapter(String name, int deviceId, {required bool integrated}) =>
+    PluginGpu(name: name, deviceId: deviceId, integrated: integrated);
 
 class _Call {
   _Call(this.name, [this.setup, this.view, this.sharp]);
@@ -234,14 +229,20 @@ void main() {
       expect(mono.eye, [0.0, 0.0, 1.0, 1.0]);
       expect(mono.crop, [0.0, 0.0, 1.0, 1.0]);
 
-      final topBottom = PluginProjection.equirect(layout: StereoLayout.topBottom);
+      final topBottom = PluginProjection.equirect(layout: PluginStereoLayout.topBottom);
       expect(topBottom.eye, [0.0, 0.0, 1.0, 0.5], reason: 'the left eye on top, as the phones show it');
-      expect(PluginProjection.equirect(layout: StereoLayout.topBottom, eye: PluginEye.right).eye, [0.0, 0.5, 1.0, 0.5]);
+      expect(
+        PluginProjection.equirect(layout: PluginStereoLayout.topBottom, eye: PluginEye.right).eye,
+        [0.0, 0.5, 1.0, 0.5],
+      );
 
-      final vr180 = PluginProjection.equirect(layout: StereoLayout.leftRight, coverage: SphereCoverage.half);
+      final vr180 = PluginProjection.equirect(layout: PluginStereoLayout.leftRight, coverage: PluginCoverage.half);
       expect(vr180.eye, [0.0, 0.0, 0.5, 1.0]);
       expect(vr180.crop, [0.25, 0.0, 0.5, 1.0], reason: 'the front half of the sphere, black behind');
-      expect(PluginProjection.equirect(layout: StereoLayout.leftRight, eye: PluginEye.right).eye, [0.5, 0.0, 0.5, 1.0]);
+      expect(
+        PluginProjection.equirect(layout: PluginStereoLayout.leftRight, eye: PluginEye.right).eye,
+        [0.5, 0.0, 0.5, 1.0],
+      );
     });
   });
 
@@ -295,7 +296,7 @@ void main() {
     late List<String> mpv;
     late DateTime clock;
 
-    PluginRenderer renderer({String glRenderer = _intel, String? refuse, GpuAdapter? adapter}) {
+    PluginRenderer renderer({String glRenderer = _intel, String? refuse, PluginGpu? adapter}) {
       channel = _FakeChannel(glRenderer: glRenderer, refuse: refuse);
       mpv = [];
       clock = DateTime(2026, 10, 9, 12);
@@ -556,7 +557,7 @@ void main() {
       await plugin.attach(projection: PluginProjection.equirect(), outputSize: const Size(1600, 900));
       channel.calls.clear();
 
-      expect(await plugin.setProjection(PluginProjection.equirect(layout: StereoLayout.topBottom)), isTrue);
+      expect(await plugin.setProjection(PluginProjection.equirect(layout: PluginStereoLayout.topBottom)), isTrue);
       expect(channel.named('enable').single.setup!.eye, [0.0, 0.0, 1.0, 0.5]);
 
       await plugin.detach();

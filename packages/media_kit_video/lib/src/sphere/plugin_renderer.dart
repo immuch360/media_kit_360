@@ -1,12 +1,12 @@
-// Renderer C of the 360 player on Windows (design 2.3, decision DP1 of 2026-10-09, docs 20-desktop-dp1.md): the
-// vendored media_kit_video draws the view itself. mpv draws each frame, as for a flat video, into an intermediate
-// texture of the video's size capped by a tier; one pass of the plugin draws the view from it into the player's
-// texture, the one its VideoController already gives Flutter, so the page keeps the Video widget, the controller and
-// the pool. Why not mpv's own renderer with a hook (renderer A): every view change went through glsl-shader-opts,
-// which rebuilds mpv's passes, kept 40 to 200 MB of GPU memory per change on the RTX 4060 until the PC ran out of
-// memory, and gave 11 fps on the Intel UHD (spikes 3 and 4).
+// Renderer C of the 360 player on Windows (decision DP1 of Immuch360 Desktop, 9 October 2026): media_kit_video's
+// plugin draws the view itself. mpv draws each frame, as for a flat video, into an intermediate texture of the
+// video's size capped by a tier; one pass of the plugin draws the view from it into the player's texture, the one its
+// VideoController already gives Flutter, so the page keeps the Video widget, the controller and any pool of players.
+// Why not mpv's own renderer with a hook (renderer A): every view change went through glsl-shader-opts, which rebuilds
+// mpv's passes, kept 40 to 200 MB of GPU memory per change on an RTX 4060 until the PC ran out of memory, and gave
+// 11 fps on an Intel UHD (the measures of 9 October 2026, in the README of this repository).
 //
-// The rules this class keeps for the player (DP1, section 4.3):
+// The rules this class keeps for the player (DP1):
 // - the view is a uniform of the plugin's pass, sent at most once per Flutter frame however fast the drag events
 //   come; nothing of mpv changes during a drag;
 // - bilinear while the view moves, the sharper filter once it rests (settleDelay after the last move);
@@ -15,10 +15,16 @@
 // - a tier changes at most once a second once a frame was drawn, since mpv then draws its frame again at the new size;
 // - a paused video is redrawn by the plugin from the frame it keeps, without mpv.
 //
-// What V-360 calls: PluginRenderer.forController(controller), then attach before the file opens (so that the
-// texture is the view from the first frame), setView on every drag, wheel or key event, setOutputSize when the
-// window changes, setProjection for the 3D cycle and the 180/360 switch, setTier from the renderer probe, stats for
-// the probe and the troubleshooting page, detach when the page closes or hands the player back to the pool.
+// What a 360 player page calls: PluginRenderer.forController(controller), then attach before the file opens (so that
+// the texture is the view from the first frame), setView on every drag, wheel or key event, setOutputSize when the
+// window changes, setProjection for a 3D cycle and a 180/360 switch, setTier from the renderer probe
+// (renderer_probe.dart), stats for the probe and a troubleshooting page, detach when the page closes or hands the
+// player back to a pool.
+//
+// Moved here from the Immuch360 app (mobile/lib/desktop/video/render/plugin_renderer.dart of
+// github.com/freeKC/Immuch360) with what tied it to the app taken out: the stereo layout, the coverage and the GPU
+// description are this file's own types (PluginStereoLayout, PluginCoverage, PluginGpu), and the GPU of a player
+// comes from the app through PluginRenderer.forController's adapter.
 
 import 'dart:async';
 import 'dart:convert';
@@ -28,17 +34,64 @@ import 'dart:ui' show Size;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:immich_mobile/desktop/video/gpu_decoders.dart';
-import 'package:immich_mobile/domain/models/sphere_coverage.dart';
-import 'package:immich_mobile/domain/models/stereo_layout.dart';
-import 'package:immuch_desktop_video/immuch_desktop_video.dart';
 import 'package:logging/logging.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 final _log = Logger('PluginRenderer');
 
-/// The size of the intermediate texture mpv draws each frame into (DP1, section 4.3). The texture is RGBA 8 bits:
+/// A GPU as the system describes it, for [PluginTier.startFor]: on Windows what DXGI says of the adapter the process
+/// draws on (its description, its PCI device id, whether it shares the system memory, whether it is a software
+/// adapter such as the Basic Render Driver). The app reads it its own way (Immuch360 through a small FFI plugin) and
+/// gives it to [PluginRenderer.forController].
+@immutable
+class PluginGpu {
+  const PluginGpu({required this.name, this.deviceId = 0, this.integrated = false, this.software = false});
+
+  /// The adapter's description ("Intel(R) UHD Graphics")
+  final String name;
+
+  /// Its PCI device id, 0 when not known
+  final int deviceId;
+
+  /// It shares the system memory (unified memory architecture): an integrated GPU
+  final bool integrated;
+
+  /// A software adapter, whose answer says nothing of a real GPU
+  final bool software;
+
+  @override
+  String toString() => 'PluginGpu($name, 0x${deviceId.toRadixString(16)}, ${integrated ? 'integrated' : 'dedicated'}'
+      '${software ? ', software' : ''})';
+}
+
+/// How the two eyes of a stereo frame are laid out: one picture ([mono]), the left eye above the right one
+/// ([topBottom], also called over under), or the left eye left of the right one ([leftRight], side by side)
+enum PluginStereoLayout {
+  mono,
+  topBottom,
+  leftRight;
+
+  /// The left eye's part of the frame: x, y, width, height in fractions of the frame, top left origin
+  List<double> get leftEye => switch (this) {
+    PluginStereoLayout.mono => const [0.0, 0.0, 1.0, 1.0],
+    PluginStereoLayout.topBottom => const [0.0, 0.0, 1.0, 0.5],
+    PluginStereoLayout.leftRight => const [0.0, 0.0, 0.5, 1.0],
+  };
+
+  /// The right eye's part of the frame, the whole frame for [mono]
+  List<double> get rightEye => switch (this) {
+    PluginStereoLayout.mono => const [0.0, 0.0, 1.0, 1.0],
+    PluginStereoLayout.topBottom => const [0.0, 0.5, 1.0, 0.5],
+    PluginStereoLayout.leftRight => const [0.5, 0.0, 0.5, 1.0],
+  };
+}
+
+/// The part of the sphere an equirectangular frame covers: all of it (360 degrees), or its front half (VR180:
+/// longitudes from -90 to +90 degrees, all latitudes, black behind)
+enum PluginCoverage { full, half }
+
+/// The size of the intermediate texture mpv draws each frame into (DP1). The texture is RGBA 8 bits:
 /// Flutter's texture is BGRA 8 bits anyway and mpv tone maps HDR before it draws.
 enum PluginTier {
   /// The video's own size, at most 8192 wide: 66 MB for a 5.7K video, 118 MB for an 8K one. The start on a dedicated
@@ -65,15 +118,15 @@ enum PluginTier {
 
   /// The tier a player starts at on the GPU ANGLE names in [glRenderer] (its renderer string, "ANGLE (Intel,
   /// Intel(R) UHD Graphics ...)"): [full] on a dedicated GPU, [w2880] on an integrated one or one not recognised.
-  /// DP1 assumed [w4096] for an integrated GPU; the skeleton measured on the Intel UHD of the owner's PC (2026-10-09)
-  /// 22 frames a second at rest and 17 while dragging for a 5.7K video at [w4096], 27 and 19 at [w2880], and for an
-  /// 8K video 21 at [w4096] against 29 at [w2880]. The RTX 4060 holds 30 at [full] for both.
+  /// DP1 assumed [w4096] for an integrated GPU; the first build measured on an Intel UHD (9 October 2026) 22 frames a
+  /// second at rest and 17 while dragging for a 5.7K video at [w4096], 27 and 19 at [w2880], and for an 8K video 21
+  /// at [w4096] against 29 at [w2880]. An RTX 4060 holds 30 at [full] for both.
   ///
-  /// [adapter], the GPU in use as DXGI describes it (gpu_decoders.dart), decides when it is the GPU ANGLE draws on:
-  /// DXGI says whether it shares the system memory, where a name cannot (the integrated GPUs of the Intel Core Ultra
-  /// call themselves "Intel(R) Arc(TM) Graphics" or "Intel(R) Arc(TM) 140V GPU", as the dedicated Arc cards do). The
-  /// names decide otherwise, an Arc counted as dedicated only with the model number of a card (A770, B580, Pro A60).
-  static PluginTier startFor(String? glRenderer, {GpuAdapter? adapter}) {
+  /// [adapter], the GPU in use as DXGI describes it, decides when it is the GPU ANGLE draws on: DXGI says whether it
+  /// shares the system memory, where a name cannot (the integrated GPUs of the Intel Core Ultra call themselves
+  /// "Intel(R) Arc(TM) Graphics" or "Intel(R) Arc(TM) 140V GPU", as the dedicated Arc cards do). The names decide
+  /// otherwise, an Arc counted as dedicated only with the model number of a card (A770, B580, Pro A60).
+  static PluginTier startFor(String? glRenderer, {PluginGpu? adapter}) {
     final name = (glRenderer ?? '').toLowerCase();
     if (adapter != null && !adapter.software && _sameGpu(adapter, name)) {
       return adapter.integrated ? PluginTier.w2880 : PluginTier.full;
@@ -90,7 +143,7 @@ enum PluginTier {
   }
 
   // ANGLE's renderer string holds the adapter's description and its device id ("... UHD Graphics (0x0000A788) ...")
-  static bool _sameGpu(GpuAdapter adapter, String glRenderer) {
+  static bool _sameGpu(PluginGpu adapter, String glRenderer) {
     final device = adapter.deviceId > 0 ? '(0x${adapter.deviceId.toRadixString(16).padLeft(8, '0')})' : null;
     final name = adapter.name.trim().toLowerCase();
     return (device != null && glRenderer.contains(device)) || (name.isNotEmpty && glRenderer.contains(name));
@@ -116,38 +169,28 @@ class PluginProjection {
   });
 
   /// The player that decodes stream 1 of a fisheye pair for the player that draws the view (two players for one raw
-  /// file, the plugin's IMMUCH360-NOTE.md, patch 7): it draws its frame into its texture and shows nothing
+  /// file, IMMUCH360-NOTE.md of this package, patch 7): it draws its frame into its texture and shows nothing
   const PluginProjection.secondary() : this._(kind: ProjectionKind.fisheyePair, secondary: true);
 
-  /// An equirectangular frame in [layout], [eye] shown (the left one by default, as the phones show), over the whole
-  /// sphere or, for [SphereCoverage.half], its front half with black behind (VR180)
+  /// An equirectangular frame in [layout], [eye] shown (the left one by default, as phones show it), over the whole
+  /// sphere or, for [PluginCoverage.half], its front half with black behind (VR180)
   factory PluginProjection.equirect({
-    StereoLayout layout = StereoLayout.mono,
-    SphereCoverage coverage = SphereCoverage.full,
+    PluginStereoLayout layout = PluginStereoLayout.mono,
+    PluginCoverage coverage = PluginCoverage.full,
     PluginEye eye = PluginEye.left,
-  }) {
-    final left = layout.leftEyeRect;
-    final rect = eye == PluginEye.left
-        ? [left.left, left.top, left.width, left.height]
-        : switch (layout) {
-            StereoLayout.mono => const [0.0, 0.0, 1.0, 1.0],
-            StereoLayout.topBottom => const [0.0, 0.5, 1.0, 0.5],
-            StereoLayout.leftRight => const [0.5, 0.0, 0.5, 1.0],
-          };
-    return PluginProjection._(
-      kind: ProjectionKind.equirect,
-      eye: rect,
-      crop: coverage == SphereCoverage.half ? const [0.25, 0.0, 0.5, 1.0] : const [0.0, 0.0, 1.0, 1.0],
-    );
-  }
+  }) => PluginProjection._(
+    kind: ProjectionKind.equirect,
+    eye: eye == PluginEye.left ? layout.leftEye : layout.rightEye,
+    crop: coverage == PluginCoverage.half ? const [0.25, 0.0, 0.5, 1.0] : const [0.0, 0.0, 1.0, 1.0],
+  );
 
-  /// The stitch of a raw 360 video from its rawProjection JSON version 2 (RawVideoPlan.toNativeJson): a fisheye pair
-  /// (Mei, equidistant, Kannala-Brandt) or a GoPro EAC pair. The frame mpv draws holds the decoded streams side by
-  /// side: the one frame of a side by side file, or the tracks (or files) of the JSON's "tracks" in their order,
-  /// stacked with lavfi-complex "[vidA] [vidB] hstack [vo]" (design 2.5). [streamsEnabled]: false for a stream that is
-  /// not decoded (one lens mode, half of the sphere black). [streamsInFrame]: the streams the frame holds when it is
-  /// not the JSON's number of tracks (1 when only the first of two tracks is decoded). Throws a [FormatException] for a
-  /// JSON it cannot draw.
+  /// The stitch of a raw 360 video from its rawProjection JSON version 2 (what the Immuch360 app writes for a raw
+  /// camera file, read by [rawStitchUniforms]): a fisheye pair (Mei, equidistant, Kannala-Brandt) or a GoPro EAC
+  /// pair. The frame mpv draws holds the decoded streams side by side: the one frame of a side by side file, or the
+  /// tracks (or files) of the JSON's "tracks" in their order, stacked with lavfi-complex "[vidA] [vidB] hstack [vo]".
+  /// [streamsEnabled]: false for a stream that is not decoded (one lens mode, half of the sphere black).
+  /// [streamsInFrame]: the streams the frame holds when it is not the JSON's number of tracks (1 when only the first
+  /// of two tracks is decoded). Throws a [FormatException] for a JSON it cannot draw.
   ///
   /// [partnerStream]: stream 1 is the frame of a second player ([PluginRenderer.setPartner]), not a part of this
   /// player's frame; it stays off until that player drew a frame.
@@ -197,10 +240,18 @@ class PluginProjection {
 }
 
 /// The uniforms of the stitch pass for the rawProjection [json] (version 2), by the names of RawStitchShaders.kt and
-/// with the values RawStitchUniforms.kt computes, so that the desktop draws the phones' picture: matrices column
-/// major (the JSON writes them row major), lens-local intrinsics (lens i's cx minus i times the canvas square),
-/// angles in radians. The half texels are left out: the pass computes them from its own texture. Throws a
-/// [FormatException] for a kind, a model or a lens it does not know.
+/// with the values RawStitchUniforms.kt computes (the stitch of the Immuch360 Android app), so that the desktop draws
+/// the phones' picture: matrices column major (the JSON writes them row major), lens-local intrinsics (lens i's cx
+/// minus i times the canvas square), angles in radians. The half texels are left out: the pass computes them from its
+/// own texture. Throws a [FormatException] for a kind, a model or a lens it does not know.
+///
+/// The keys read: "version" (2), "kind" ("dualFisheye" or "eacGoPro"), "tracks" (a non empty list, one entry per
+/// decoded stream). For "dualFisheye": "model" ("mei", "equidistant" or "kannalaBrandt"), "canvasSquare", "maxTheta",
+/// "blendStart" and "blendEnd" in degrees, and two "lenses", each with "viewToLens" (9 values, row major), "cx", "cy",
+/// "fx", "fy", "k1" to "k5", "xi", "p1", "p2", "region" (x, y, width, height in fractions of the frame), "texture"
+/// (the stream it is in), and "radius" with "radiusTheta" for the equidistant model. For "eacGoPro": "face", "half",
+/// "right", "overlap", "middle" in pixels, "viewToCamera" (9 values, row major) and six "faces", each with "right",
+/// "down", "forward" (3 values each), "texture" and "slot".
 @visibleForTesting
 Map<String, List<double>> rawStitchUniforms(Map<String, Object?> json) {
   if (json['version'] != 2) {
@@ -360,21 +411,33 @@ class PluginAttach {
 
 /// Renderer C for one player, see the top of this file
 class PluginRenderer {
+  /// [handle] gives the player's handle once the plugin knows it ([Player.handle] after the controller made the
+  /// texture), [setMpvProperty] sets an mpv property of that player (keepaspect), [channel] replaces the plugin's
+  /// method calls (the tests), [adapter] gives the GPU in use, [now] the clock.
   PluginRenderer({
-    required this._handle,
-    this._setMpvProperty,
+    required Future<int> Function() handle,
+    Future<void> Function(String name, String value)? setMpvProperty,
     PluginChannel? channel,
-    this._adapter,
+    Future<PluginGpu?> Function()? adapter,
     this.maxOutputHeight = defaultMaxOutputHeight,
     this.settleDelay = const Duration(milliseconds: 150),
     this.resizeDelay = const Duration(milliseconds: 100),
     this.tierInterval = const Duration(seconds: 1),
     DateTime Function()? now,
-  }) : _channel = channel ?? const _MethodChannelPlugin(),
+  }) : _handle = handle,
+       _setMpvProperty = setMpvProperty,
+       _adapter = adapter,
+       _channel = channel ?? const _MethodChannelPlugin(),
        _now = now ?? DateTime.now;
 
-  /// Renderer C for the player of [controller]: its texture becomes the view once [attach] answers
-  factory PluginRenderer.forController(VideoController controller, {int maxOutputHeight = defaultMaxOutputHeight}) {
+  /// Renderer C for the player of [controller]: its texture becomes the view once [attach] answers. [adapter] gives
+  /// the GPU the process draws on, for the start tier (see [PluginTier.startFor]); without it the renderer string of
+  /// ANGLE decides alone.
+  factory PluginRenderer.forController(
+    VideoController controller, {
+    int maxOutputHeight = defaultMaxOutputHeight,
+    Future<PluginGpu?> Function()? adapter,
+  }) {
     final player = controller.player;
     return PluginRenderer(
       handle: () async {
@@ -388,15 +451,17 @@ class PluginRenderer {
           await native.setProperty(name, value);
         }
       },
-      adapter: DesktopGpuDecoders.adapter,
+      adapter: adapter,
       maxOutputHeight: maxOutputHeight,
     );
   }
 
-  /// Where renderer C exists: the vendored media_kit_video draws it on Windows only (Linux and macOS in phase 4)
+  /// Where renderer C exists: this package's plugin draws it on Windows only for now. Elsewhere [attach] answers not
+  /// ok, and the video plays flat.
   static bool get supported => !kIsWeb && Platform.isWindows;
 
-  /// The render height cap of design 2.11, the flat player's (DesktopPlayerOptions.maxRenderHeight)
+  /// The default cap of the output's height, in lines: the render height cap of Immuch360's flat player
+  /// ([VideoController.maxOutputHeight] there)
   static const defaultMaxOutputHeight = 1440;
 
   final Future<int> Function() _handle;
@@ -404,9 +469,9 @@ class PluginRenderer {
   final PluginChannel _channel;
 
   /// The GPU in use as DXGI describes it, for the start tier (PluginTier.startFor); none in the tests
-  final Future<GpuAdapter?> Function()? _adapter;
+  final Future<PluginGpu?> Function()? _adapter;
 
-  /// The longest wait for [_adapter] at an attach: read at the app's start, it is there long before a 360° video
+  /// The longest wait for [_adapter] at an attach: an app that reads it at its start has it long before a 360° video
   static const adapterTimeout = Duration(seconds: 2);
   final DateTime Function() _now;
 
@@ -682,7 +747,7 @@ class PluginRenderer {
     secondary: projection.secondary,
   );
 
-  Future<GpuAdapter?> _gpuAdapter() async {
+  Future<PluginGpu?> _gpuAdapter() async {
     final adapter = _adapter;
     if (adapter == null) {
       return null;

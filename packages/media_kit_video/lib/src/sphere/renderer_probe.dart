@@ -1,12 +1,12 @@
-// The renderer probe of the 360° player of the computers (design 2.3 "Selection", DP1 section 4.3 "Sonde"): whether
-// renderer C keeps up with the video at its tier on this computer, measured on the playback itself rather than on a
-// test clip, since the cost depends on the video (5.7K H.264 decoded in software, 8K HEVC without copy) as much as on
-// the GPU.
+// The renderer probe of the 360° player of the computers (decision DP1 of Immuch360 Desktop, 9 October 2026): whether
+// renderer C (plugin_renderer.dart) keeps up with the video at its tier on this computer, measured on the playback
+// itself rather than on a test clip, since the cost depends on the video (5.7K H.264 decoded in software, 8K HEVC
+// without copy) as much as on the GPU.
 //
 // What it measures: the frames the plugin drew with a new frame of mpv, against the frame rate of the video, over
 // the first [RendererProbeLimits.window] of playback (time paused or buffering left out), with the time each draw
 // took; and the memory of the process over that window and then while the view moves (DP1: the first five seconds and
-// the drags), since a renderer that kept memory per view change brought the owner's PC down on 2026-10-09 (spike 3).
+// the drags), since a renderer that kept memory per view change brought the test laptop down on 9 October 2026.
 // A drag is measured from its own start: a demuxer cache that fills over a minute, or the rest of the app, is not the
 // renderer's growth. What it decides: keep the tier, go a tier down, or give up (flat, with the message); and, when
 // renderer C attached but draws nothing (a pass the driver does not compile, an intermediate texture it refuses),
@@ -14,12 +14,15 @@
 //
 // A shortfall is not always the renderer's: a video the processor decodes, or one whose frames come late while the
 // plugin draws each in a fraction of a frame's time, is limited by its decoding (decodeLimited), and the page then
-// plays the server's transcoded stream when there is one rather than taking the renderer down.
+// can play another stream (Immuch360 plays the server's transcoded one) rather than take the renderer down.
 //
-// The thresholds are assumptions [A], set from the measures of the skeleton (V-C, 2026-10-09): the Intel UHD of the
-// owner's PC draws a 5.7K video at the 2880 tier at 27.3 frames a second of 30 at rest (kept: above 0.9 of the rate),
-// and the RTX 4060 holds 30 at the full tier. Below 0.6 of the rate at the lowest tier the view is too jerky to be
-// worth it, and the video plays flat with the message.
+// The thresholds are assumptions, set from the measures of the first build (9 October 2026): an Intel UHD draws a
+// 5.7K video at the 2880 tier at 27.3 frames a second of 30 at rest (kept: above 0.9 of the rate), and an RTX 4060
+// holds 30 at the full tier. Below 0.6 of the rate at the lowest tier the view is too jerky to be worth it, and the
+// video plays flat with a message.
+//
+// Moved here from the Immuch360 app, its code unchanged (mobile/lib/desktop/video/render/renderer_probe.dart of
+// github.com/freeKC/Immuch360); what the app keeps per kind of video, and its settings, stay in the app.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -107,7 +110,7 @@ class ProbeSample {
       '${pair == null ? '' : ', $pair'})';
 }
 
-/// How the plugin drew the frames of two players (the media_kit_video plugin's IMMUCH360-NOTE.md, patch 7): both
+/// How the plugin drew the frames of two players (IMMUCH360-NOTE.md of this package, patch 7): both
 /// frames of one time together, a frame alone once it waited long enough for its partner's, a frame drawn without a
 /// view to catch up, the second player's frames, and how much later they came, with the speed the second player was
 /// given to close that
@@ -195,7 +198,7 @@ ProbeVerdict judgeProbe(ProbeSample sample, {required bool lowestTier}) {
 }
 
 /// Whether [sample], kept at the lowest tier, is below the rate all the same: the view plays, not smoothly, and the
-/// user is told that a dedicated graphics card helps (DP1: the Intel UHD of the owner's PC draws a 5.7K H.264 video,
+/// user is told that a dedicated graphics card helps (DP1: the Intel UHD of the test laptop draws a 5.7K H.264 video,
 /// decoded in software, at 20 to 27 frames a second of 30 at the 2880 tier)
 bool slowAtLowestTier(ProbeSample sample, {required bool lowestTier}) {
   final ratio = sample.ratio;

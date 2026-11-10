@@ -1,3 +1,7 @@
+> This note was written in the Immuch360 app repository (github.com/freeKC/Immuch360), where this package lived
+> under `mobile/packages/` until it moved to github.com/immuch360/media_kit_360 on 10 November 2026: the paths
+> under `mobile/` and `.github/` below are that repository's, and "the app" is Immuch360.
+
 Copy of `media_kit_video` 2.0.1 (MIT, https://github.com/media-kit/media-kit, folder `media_kit_video`) at commit
 `c533e446755f51cf53c7e57aea873f2aa5355f81` of `main` (2026-08-30, "fix: memory leaks (#1446)"), the newest commit of
 `main` on 2026-10-08, which carries the 2026 fixes the pub.dev release 2.0.1 of 2025-12-02 lacks (#1440 for Linux,
@@ -9,8 +13,10 @@ What differs from upstream, to apply again when a newer commit is copied here:
 Layout (no change to the code):
 
 - `pubspec.yaml`: `windows`, `linux` and `macos` are the only plugin platforms (upstream also declares android, ios and
-  web), so that the Android and iOS builds of Immuch360 register nothing of it and bundle no libmpv through it; no
-  `resolution: workspace` (the upstream repository is a pub workspace); `publish_to: none`, version `2.0.1+immuch360`.
+  web), so that the Android and iOS builds of Immuch360 register nothing of it and bundle no libmpv through it;
+  `publish_to: none`, version `2.0.1+immuch360`. Since the move to github.com/immuch360/media_kit_360 the package is
+  again a member of a pub workspace (`resolution: workspace`, the root `pubspec.yaml` of that repository), with the
+  dev dependencies of its tests and `logging` for the 360 renderer's Dart side (patch 13).
 - The `android/`, `ios/` and `example/` folders are left out.
 - The macOS sources that upstream shares with iOS through symbolic links into `common/darwin/Classes/` are copied in
   place under `macos/media_kit_video/Sources/media_kit_video/{plugin,stub}/common/`, and `common/darwin/Classes/` is
@@ -236,6 +242,17 @@ Patches:
    one the same and one worse; the Intel UHD, busy 8.4 to 13.3 ms a present with the 4K AV2 video (12.5 or more in 4
    of those 6 runs) against 5.4 to 8.6 ms with H.264, looked like the limit rather than the lock. Kept for the next
    measures.
+13. Dart, the 360 renderer's API in the package (`lib/sphere.dart`, `lib/src/sphere/plugin_renderer.dart`,
+   `lib/src/sphere/renderer_probe.dart`, `test/sphere/`, 10 November 2026). `PluginRenderer` (attach before the file
+   opens, `setView`, `setOutputSize`, `setProjection`, `setTier`, `setPartner`, `stats`, `detach`), `PluginTier` and
+   `RendererProbe` were the app's (`mobile/lib/desktop/video/render/`), on top of patch 6's `ProjectionOutput`. They
+   moved here with their history and their tests, the app's own types replaced by the package's: `PluginStereoLayout`
+   for the app's `StereoLayout`, `PluginCoverage` for its `SphereCoverage`, `PluginGpu` for the `GpuAdapter` of its
+   DXGI plugin, given through `PluginRenderer.forController(adapter: ...)`. The app keeps what is its own: the renderer
+   choice of its settings and what the probe measured per kind of video (`sphere_renderer.dart`, a JSON file of its
+   support folder), the projection of its assets (`projection_params.dart`), its two lens raw file logic and its page.
+   The plugin renderer test runs on every system; the shader test needs ANGLE, so the Windows build of the example
+   app (`MEDIA_KIT_360_BUILD_DIR` names another build folder).
 
 Not done yet (plan 20-plan-desktop.md, 2.2): the D3D11 device on the adapter Flutter uses. It is not needed on a
 laptop with two GPUs: Flutter's ANGLE, the plugin's device and display and mpv's decoder all take the adapter DXGI
