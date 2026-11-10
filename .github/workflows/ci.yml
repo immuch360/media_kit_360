@@ -1,0 +1,150 @@
+name: CI
+
+# The packages analysed and tested, the example app built for Windows and Linux on GitHub's hosted runners, the passes
+# of renderer C compiled by the ANGLE of the Windows build, and the isolated EGL context of the Linux plugin checked on a
+# virtual screen. Flutter 3.47.2, the version of the Immuch360 app.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 3.47.2
+
+jobs:
+  analyze-test:
+    name: Analyze and test the packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # One resolution for the whole workspace: the packages and the example take each other from their folders
+      - name: Dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      # The plugin renderer and the renderer probe without the plugin; the shader test skips here (Windows only, below)
+      - name: Tests
+        working-directory: packages/media_kit_video
+        run: flutter test
+
+  linux:
+    name: Linux build of the example
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Flutter's Linux setup, the headers of libmpv (the plugin opens the system's libmpv at run time and links none),
+      # and the virtual screen of the EGL test
+      - name: Linux build packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libstdc++-12-dev libmpv-dev xvfb xauth
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Build
+        working-directory: example
+        run: |
+          flutter pub get
+          flutter build linux --release
+
+      # The isolated EGL context of the video outputs next to the GL context GDK leaves current (IMMUCH360-NOTE.md of
+      # media_kit_video, patch 10), with Mesa's software renderer
+      - name: The isolated EGL context of the Linux plugin
+        working-directory: packages/media_kit_video/linux
+        run: |
+          g++ -std=c++17 -Wall -Werror -o "$RUNNER_TEMP/isolated_egl_test" test/isolated_egl_test.cc isolated_egl.cc \
+            $(pkg-config --cflags --libs gtk+-3.0 epoxy)
+          LIBGL_ALWAYS_SOFTWARE=1 GDK_BACKEND=x11 xvfb-run -a -s "-screen 0 640x480x24" "$RUNNER_TEMP/isolated_egl_test"
+
+      - name: Upload the bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: media_kit_360-example-linux-x64
+          path: example/build/linux/x64/release/bundle
+          retention-days: 14
+          if-no-files-found: error
+
+  windows:
+    name: Windows build of the example
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # media_kit_libs_windows_video downloads libmpv (the pinned build of IMMUCH360_LIBMPV_FROM_CI) and ANGLE at
+      # configure time, each checked by its SHA-256
+      - name: Build
+        working-directory: example
+        run: |
+          flutter pub get
+          flutter build windows --release
+
+      # The libraries the libs package bundles next to the executable; the shader test below skips without ANGLE's
+      - name: The bundled libraries
+        working-directory: example/build/windows/x64/runner/Release
+        run: |
+          for file in libmpv-2.dll libEGL.dll libGLESv2.dll d3dcompiler_47.dll media_kit_360_example.exe; do
+            test -f "$file" || { echo "::error::$file is missing from the build"; exit 1; }
+          done
+          ls -la
+
+      # The three passes of renderer C compiled and linked by the ANGLE of this build, and the equirectangular one
+      # drawn where the view looks; the runner has no GPU, so ANGLE's Direct3D 11 device is the Basic Render Driver
+      - name: The passes of renderer C in ANGLE
+        working-directory: packages/media_kit_video
+        env:
+          MEDIA_KIT_360_BUILD_DIR: ${{ github.workspace }}\example\build\windows\x64\runner\Release
+        run: flutter test test/sphere/plugin_shaders_windows_test.dart
+
+      - name: Upload the build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: media_kit_360-example-windows-x64
+          path: example/build/windows/x64/runner/Release
+          retention-days: 14
+          if-no-files-found: error
