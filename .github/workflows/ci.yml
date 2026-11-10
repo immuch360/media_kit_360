@@ -60,12 +60,13 @@ jobs:
           persist-credentials: false
 
       # Flutter's Linux setup, the headers of libmpv (the plugin opens the system's libmpv at run time and links none),
-      # and the virtual screen of the EGL test
+      # and the virtual screen of the EGL test. The runner's mirror is sometimes very slow: apt_install.sh downloads in
+      # three attempts of 150 s at most, the second and the third on another mirror, then installs
       - name: Linux build packages
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
-            libstdc++-12-dev libmpv-dev xvfb xauth
+          sudo sh .github/scripts/apt_install.sh --no-install-recommends clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev libmpv-dev xvfb xauth
 
       - name: Install Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
