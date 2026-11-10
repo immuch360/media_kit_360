@@ -1,5 +1,10 @@
 # Notices: the native libraries of the video player of Immuch360 Desktop on Windows
 
+> Written for the Immuch360 app (github.com/freeKC/Immuch360), where these packages come from: the paths under
+> `mobile/` and `.github/` are that repository's. Any app built with `media_kit_libs_windows_video` of
+> github.com/immuch360/media_kit_360 bundles the same files next to its executable, under the same licences, and
+> should ship this file and the texts of `licenses/` with them.
+
 The Windows build of Immuch360 places the files below next to `immuch360.exe`. `media_kit_libs_windows_video`
 (`mobile/packages/media_kit_libs_windows_video/windows/CMakeLists.txt`) downloads them, checks each archive by its
 SHA-256 and bundles them; this plugin, `media_kit_video`, draws the frames they decode. Both plugins are MIT (`LICENSE`

@@ -1,15 +1,15 @@
 name: media_kit_libs_windows_video
 description: Windows package providing video (& audio) native libraries for package:media_kit.
-# Copy of media_kit_libs_windows_video from github.com/media-kit/media-kit at c533e446755f51cf53c7e57aea873f2aa5355f81,
-# used by Immuch360 Desktop through dependency_overrides in mobile/pubspec.yaml; the changes are listed in
-# IMMUCH360-NOTE.md
+# Copy of media_kit_libs_windows_video from github.com/media-kit/media-kit at c533e446755f51cf53c7e57aea873f2aa5355f81;
+# the changes are listed in IMMUCH360-NOTE.md (among them the pinned libmpv build, IMMUCH360_LIBMPV_FROM_CI)
 publish_to: 'none'
 version: 1.0.12+immuch360
-homepage: https://github.com/media-kit/media-kit.git
-repository: https://github.com/media-kit/media-kit.git
+homepage: https://immuch360.com
+repository: https://github.com/immuch360/media_kit_360
 environment:
   sdk: ^3.6.0
   flutter: ">=3.27.4"
+resolution: workspace
 dependencies:
   flutter:
     sdk: flutter

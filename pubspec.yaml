@@ -1,0 +1,13 @@
+# The pub workspace of media_kit_360: one `flutter pub get` here resolves the four packages and the example together,
+# each package of the workspace taking the others from their folders. Not a package itself.
+name: media_kit_360_workspace
+publish_to: 'none'
+
+environment:
+  sdk: ^3.6.0
+
+workspace:
+  - packages/media_kit
+  - packages/media_kit_video
+  - packages/media_kit_libs_linux
+  - packages/media_kit_libs_windows_video

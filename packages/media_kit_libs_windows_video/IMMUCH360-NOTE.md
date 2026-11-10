@@ -1,3 +1,7 @@
+> This note was written in the Immuch360 app repository (github.com/freeKC/Immuch360), where this package lived
+> under `mobile/packages/` until it moved to github.com/immuch360/media_kit_360 on 10 November 2026: the paths
+> under `mobile/` and `.github/` below are that repository's, and "the app" is Immuch360.
+
 Copy of `media_kit_libs_windows_video` 1.0.12 (MIT, https://github.com/media-kit/media-kit, folder
 `libs/windows/media_kit_libs_windows_video`) at commit `c533e446755f51cf53c7e57aea873f2aa5355f81` of `main`
 (2026-08-30); pub.dev only has 1.0.11 of 2025-03-24, without the arm64 libraries. Used by Immuch360 Desktop through

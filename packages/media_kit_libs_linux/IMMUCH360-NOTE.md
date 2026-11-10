@@ -1,3 +1,7 @@
+> This note was written in the Immuch360 app repository (github.com/freeKC/Immuch360), where this package lived
+> under `mobile/packages/` until it moved to github.com/immuch360/media_kit_360 on 10 November 2026: the paths
+> under `mobile/` and `.github/` below are that repository's, and "the app" is Immuch360.
+
 Copy of `media_kit_libs_linux` 1.2.1 (MIT, https://github.com/media-kit/media-kit, folder
 `libs/linux/media_kit_libs_linux`) at commit `c533e446755f51cf53c7e57aea873f2aa5355f81` of `main` (2026-08-30), the
 commit of the copies of `media_kit`, `media_kit_video` and `media_kit_libs_windows_video`; its code is that of the

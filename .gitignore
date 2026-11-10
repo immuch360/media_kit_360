@@ -1,0 +1,17 @@
+# Dart and Flutter
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+pubspec_overrides.yaml
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+**/doc/api/
+
+# Editors and systems
+.idea/
+*.iml
+.vscode/
+.DS_Store
+pubspec.lock

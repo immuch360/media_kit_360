@@ -1,3 +1,7 @@
+> This note was written in the Immuch360 app repository (github.com/freeKC/Immuch360), where this package lived
+> under `mobile/packages/` until it moved to github.com/immuch360/media_kit_360 on 10 November 2026: the paths
+> under `mobile/` and `.github/` below are that repository's, and "the app" is Immuch360.
+
 Copy of `media_kit` 1.2.6 (MIT, https://github.com/media-kit/media-kit, folder `media_kit`) at commit
 `c533e446755f51cf53c7e57aea873f2aa5355f81` of `main` (2026-08-30), the newest commit of `main` on 2026-10-08, which
 carries the 2026 fixes the pub.dev release 1.2.6 of 2025-12-13 lacks (#1440, #1446, `observeEvent` of #1429). Used by
