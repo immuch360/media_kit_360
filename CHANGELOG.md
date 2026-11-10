@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1, 10 November 2026
+
+- **libmpv from libmpv-builds.** media_kit_libs_windows_video now downloads libmpv from the release
+  `libmpv-windows-20261110-1` of [immuch360/libmpv-builds](https://github.com/immuch360/libmpv-builds), where the
+  recipe moved, pinned by the SHA-256 of its `SHA256SUMS.txt` (x64 and arm64). It is the same mpv (`0b7ed670`) and
+  FFmpeg (`5b9a3ad7`) as the release `libmpv-windows-20261009-3` of freeKC/Immuch360 that 1.0.0 pinned, rebuilt from
+  the same pinned sources. The README and the Windows notices name the new source.
+
 ## 1.0.0, 10 November 2026
 
 The 360° video renderer as Immuch360 Desktop build 24 shipped it on 9 November 2026, out of the Immuch360 repository

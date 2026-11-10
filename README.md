@@ -164,10 +164,11 @@ which a smaller tier does not cure.
 ### The libmpv build
 
 On Windows, `media_kit_libs_windows_video` downloads libmpv and ANGLE when the app's build is configured, checks each
-archive by its SHA-256 and bundles them next to the executable. The libmpv it takes by default is the build
-`libmpv-windows-20261009-3` (mpv `0b7ed670`, a 2026 FFmpeg) of the
-[Immuch360 releases](https://github.com/freeKC/Immuch360/releases/tag/libmpv-windows-20261009-3), whose sources are
-published with it. Its d3d11 interop imports the frames the GPU decodes into ANGLE without a copy, where media-kit's
+archive by its SHA-256 and bundles them next to the executable. The libmpv it takes by default is the release
+[libmpv-windows-20261110-1](https://github.com/immuch360/libmpv-builds/releases/tag/libmpv-windows-20261110-1) of
+[libmpv-builds](https://github.com/immuch360/libmpv-builds) (mpv `0b7ed670`, FFmpeg `5b9a3ad7`), whose sources are
+published with it. To pin another release, change `IMMUCH360_LIBMPV_TAG`, the archive names and their SHA-256 at the
+top of `packages/media_kit_libs_windows_video/windows/CMakeLists.txt`, from the release's `SHA256SUMS.txt`. Its d3d11 interop imports the frames the GPU decodes into ANGLE without a copy, where media-kit's
 2024 libmpv copies each of them back to memory (`d3d11va-copy`). Set `IMMUCH360_LIBMPV_FROM_CI=0` in the environment of a build
 to take media-kit's 2024 archive instead. The licences of what is bundled, libmpv and FFmpeg under the LGPL among
 them, are in [NOTICES.md](packages/media_kit_video/windows/NOTICES.md); ship it and its `licenses/` folder with your app.

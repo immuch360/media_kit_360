@@ -37,7 +37,10 @@ What differs from upstream, to apply again when a newer commit is copied here:
   `IMMUCH360_LIBMPV_TAG`, the archive names and their SHA-256 (filled from the release's SHA256SUMS.txt; the run summary
   prints the lines to paste); with the switch on and these values empty, the configure stops with a message. The
   environment variable of the same name overrides the default for one build
-  (`IMMUCH360_LIBMPV_FROM_CI=1 win_flutter.sh --env IMMUCH360_LIBMPV_FROM_CI build windows ...`).
+  (`IMMUCH360_LIBMPV_FROM_CI=1 win_flutter.sh --env IMMUCH360_LIBMPV_FROM_CI build windows ...`). Since media_kit_360
+  1.0.1 (10 November 2026) the recipe lives in github.com/immuch360/libmpv-builds and the pin is its release
+  `libmpv-windows-20261110-1` (`IMMUCH360_LIBMPV_RELEASES` points there; mpv `0b7ed670` and FFmpeg `5b9a3ad7` as
+  before, rebuilt by its run 42837177719; x64 `f97a1e31...8da4`, arm64 `69842f61...dcc4`).
 - `windows/CMakeLists.txt`: `zlib.dll` of `ANGLE.7z` is no longer bundled. That file is a debug build (it imports
   `VCRUNTIME140D.dll` and `ucrtbased.dll`, absent from a Windows without Visual Studio) and no file of the folder
   imports it or names it; `.github/desktop/windows_bundle.py` refuses a debug runtime, so no ZIP could be made with it.

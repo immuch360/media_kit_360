@@ -40,8 +40,9 @@ function(check_directory_exists_and_not_empty dir result_var)
 endfunction()
 
 # Immuch360: which libmpv the app bundles.
-#   ON (the default from desktop build 4): the libmpv the fork rebuilds with .github/workflows/immuch360-libmpv.yml,
-#       with a recent FFmpeg and its sources published next to it, pinned by the release and the SHA-256 values below
+#   ON (the default from desktop build 4): the libmpv of a libmpv-windows-* release of
+#       github.com/immuch360/libmpv-builds (since media_kit_360 1.0.1; the releases of freeKC/Immuch360 before), with
+#       a recent FFmpeg and its sources published next to it, pinned by the release and the SHA-256 values below
 #       (from the release's SHA256SUMS.txt). It has the filter that stacks the two lenses of a raw video and the
 #       d3d11 interop the 360° renderer uses without copying frames back.
 #   OFF: media-kit's 2024 archive, the one media_kit_libs_windows_video 1.0.12 downloads (mpv
@@ -53,12 +54,12 @@ if(DEFINED ENV{IMMUCH360_LIBMPV_FROM_CI})
 elseif(NOT DEFINED IMMUCH360_LIBMPV_FROM_CI)
   set(IMMUCH360_LIBMPV_FROM_CI ON)
 endif()
-set(IMMUCH360_LIBMPV_RELEASES "https://github.com/freeKC/Immuch360/releases/download")
-set(IMMUCH360_LIBMPV_TAG "libmpv-windows-20261009-3")
-set(IMMUCH360_LIBMPV_X64 "mpv-dev-x86_64-20261009-git-0b7ed67.7z")
-set(IMMUCH360_LIBMPV_X64_SHA256 "9a1a156553f0b004d89791eb39e5f6c61f4f87cb9711ff0ab978031ac9063f82")
-set(IMMUCH360_LIBMPV_ARM64 "mpv-dev-aarch64-20261009-git-0b7ed67.7z")
-set(IMMUCH360_LIBMPV_ARM64_SHA256 "230eac0a94453456617f124636512abc7dc584998c1911f98cdd83aede96c33a")
+set(IMMUCH360_LIBMPV_RELEASES "https://github.com/immuch360/libmpv-builds/releases/download")
+set(IMMUCH360_LIBMPV_TAG "libmpv-windows-20261110-1")
+set(IMMUCH360_LIBMPV_X64 "mpv-dev-x86_64-20261110-git-0b7ed67.7z")
+set(IMMUCH360_LIBMPV_X64_SHA256 "f97a1e31c697ad4f4eb15c51d2d451154268c31a39dae1085418debc2e918da4")
+set(IMMUCH360_LIBMPV_ARM64 "mpv-dev-aarch64-20261110-git-0b7ed67.7z")
+set(IMMUCH360_LIBMPV_ARM64_SHA256 "69842f616588923bb1bb631b163b54ab5b0ffc2c2fd5de2aa9bea63202accdc4")
 
 # Detect architecture and set appropriate libmpv archive
 if(${FLUTTER_TARGET_PLATFORM} STREQUAL "windows-x64")
@@ -75,7 +76,7 @@ endif()
 
 if(IMMUCH360_LIBMPV_FROM_CI)
   if(NOT IMMUCH360_LIBMPV_TAG OR NOT LIBMPV_CI OR NOT LIBMPV_CI_SHA256)
-    message(FATAL_ERROR "IMMUCH360_LIBMPV_FROM_CI is on but no build of immuch360-libmpv.yml is pinned yet: fill "
+    message(FATAL_ERROR "IMMUCH360_LIBMPV_FROM_CI is on but no libmpv-builds release is pinned yet: fill "
       "IMMUCH360_LIBMPV_TAG and the archive names and SHA-256 values in ${CMAKE_CURRENT_LIST_FILE}")
   endif()
   set(LIBMPV "${LIBMPV_CI}")

@@ -33,7 +33,7 @@ per library) and its `BUILDINFO.txt` go into `licenses/libmpv/` as well.
 | Switch `IMMUCH360_LIBMPV_FROM_CI` | Archive | Versions |
 |---|---|---|
 | off (the fallback; the default until desktop build 3) | `mpv-dev-x86_64-20241021-git-0f78584.7z`, SHA-256 `e23701df0adc1fe57c8ede3ff313513b0b80519870058c2d35ff02754284a007` (arm64: `mpv-dev-aarch64-20241021-git-0f78584.7z`, `d445d02ab2ee60b1b5988f08ce4d2394cdcc594e98321b746a313313e96133ae`), release `20241021` of `media-kit/libmpv-win32-video-cmake` | mpv v0.39.0-179-g0f78584518, FFmpeg N-117622-g8d940a07d (as the library reports them) |
-| on (the default since desktop build 4, release `libmpv-windows-20261009-3`) | the archives of a `libmpv-windows-*` release of `freeKC/Immuch360`, built by `.github/workflows/immuch360-libmpv.yml` and pinned by the SHA-256 of that release's `SHA256SUMS.txt` | in that release's `BUILDINFO-x86_64.txt` and `BUILDINFO-aarch64.txt` |
+| on (the default since desktop build 4; release `libmpv-windows-20261110-1` of `immuch360/libmpv-builds` since media_kit_360 1.0.1, `libmpv-windows-20261009-3` of `freeKC/Immuch360` before) | the archives of a `libmpv-windows-*` release of `immuch360/libmpv-builds` (of `freeKC/Immuch360` until media_kit_360 1.0.0), built by its workflow and pinned by the SHA-256 of that release's `SHA256SUMS.txt` | in that release's `BUILDINFO-x86_64.txt` and `BUILDINFO-aarch64.txt` (mpv `0b7ed670`, FFmpeg `5b9a3ad7` for both releases) |
 
 ### Licence
 
@@ -59,9 +59,10 @@ https://www.gnu.org/licenses/gpl-3.0.html), each part keeping its own licence an
 - **Get the corresponding source.**
   - Build of the fork (switch on): each `libmpv-windows-*` release carries `<tag>-sources.tar.xz`, the
     sources of every library built for the DLL at the commits listed in `BUILDINFO-<arch>.txt`, together with the
-    build recipe at its commit and the two files of `.github/desktop/libmpv/` that set the options of FFmpeg and mpv.
-    Every library is built at the commit pinned in `.github/desktop/libmpv/sources.lock`, so running the workflow
-    again, or the same commands on a Linux machine with the container it names, rebuilds the DLL from the same code.
+    build recipe at its commit and the two files that set the options of FFmpeg and mpv (`windows/` of
+    github.com/immuch360/libmpv-builds, `.github/desktop/libmpv/` of the app before). Every library is built at the
+    commit pinned in that folder's `sources.lock`, so running the workflow again, or the same commands on a Linux
+    machine with the container it names, rebuilds the DLL from the same code.
   - media-kit's 2024 archive (switch off): mpv at commit `0f78584518` (https://github.com/mpv-player/mpv) and FFmpeg at
     commit `8d940a07d` (https://github.com/FFmpeg/FFmpeg), built by the recipe `media-kit/libmpv-win32-video-cmake` at
     commit `8ddbe54` (tag `20241021`); that recipe took the other libraries from their repositories as they were on
