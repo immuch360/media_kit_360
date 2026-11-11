@@ -77,17 +77,17 @@ dependencies:
   media_kit_video:
     git:
       url: https://github.com/immuch360/media_kit_360
-      ref: v1.0.1
+      ref: v1.1.0
       path: packages/media_kit_video
   media_kit_libs_windows_video:
     git:
       url: https://github.com/immuch360/media_kit_360
-      ref: v1.0.1
+      ref: v1.1.0
       path: packages/media_kit_libs_windows_video
   media_kit_libs_linux:
     git:
       url: https://github.com/immuch360/media_kit_360
-      ref: v1.0.1
+      ref: v1.1.0
       path: packages/media_kit_libs_linux
 
 # Optional: media_kit with the fixes of this repository (packages/media_kit/IMMUCH360-NOTE.md), among them drag and
@@ -97,7 +97,7 @@ dependency_overrides:
   media_kit:
     git:
       url: https://github.com/immuch360/media_kit_360
-      ref: v1.0.1
+      ref: v1.1.0
       path: packages/media_kit
 ```
 
