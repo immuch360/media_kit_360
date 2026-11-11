@@ -54,7 +54,7 @@ inline void Slerp(const double a[4],
     wa = 1.0 - share;
     wb = share;
   } else {
-    const double angle = std::acos(std::min(1.0, dot));
+    const double angle = std::acos((std::min)(1.0, dot));
     const double sine = std::sin(angle);
     wa = std::sin((1.0 - share) * angle) / sine;
     wb = std::sin(share * angle) / sine;
