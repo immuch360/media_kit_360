@@ -112,12 +112,15 @@ class ProjectionRenderer {
   // Draws the view into the bound surface (FBO 0) at |width| x |height|, then
   // leaves the OpenGL state at the defaults mpv expects (render_gl.h).
   // |second_texture|, when not 0, is stream 1 of a stitch, read from that
-  // texture of the share group (patch 7).
+  // texture of the share group (patch 7). |correction|, when not null, is the
+  // stabilisation of the frame drawn, uCorrection column major (patch 14):
+  // the stitches only.
   bool DrawView(const ProjectionSetup& setup,
                 const ProjectionView& view,
                 int32_t width,
                 int32_t height,
-                GLuint second_texture = 0);
+                GLuint second_texture = 0,
+                const float* correction = nullptr);
 
   // Reads five pixels of the output just drawn: the centre, then the middle
   // of the top, bottom, left and right edges (an eighth inside), as 0xAABBGGRR.
@@ -137,7 +140,8 @@ class ProjectionRenderer {
                    const ProjectionView& view,
                    int32_t width,
                    int32_t height,
-                   bool second);
+                   bool second,
+                   const float* correction);
 
   using TexStorage2D = void(GL_APIENTRY*)(GLenum, GLsizei, GLenum, GLsizei,
                                           GLsizei);

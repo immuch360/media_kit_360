@@ -2,7 +2,9 @@
 // the ANGLE of the Windows build, without a window: the sources are read from the header and put together as
 // ProjectionRenderer does, all three programs must compile and link in OpenGL ES 3.0, and the equirectangular pass
 // draws a synthetic frame (upper half red, lower half blue, the quarter ahead green) where the view looks: up is up,
-// the first row of the output is the top of the view, the yaw turns to the right, a VR180 crop is black behind.
+// the first row of the output is the top of the view, the yaw turns to the right, a VR180 crop is black behind. The
+// stabilisation of the stitches (IMMUCH360-NOTE.md patch 14): the output direction v samples the lens at K^T v, K the
+// correction of the frame, and nothing changes while uStabilize is 0.
 // Windows only, after a Windows build of the example app (it holds libEGL.dll and libGLESv2.dll), from this package's
 // folder:
 //   (cd ../../example && flutter build windows --debug)
@@ -571,5 +573,197 @@ void main() {
       255,
       0,
     ), reason: 'one player: stream 1 is a part of this frame, here clamped to its last column');
+  }, skip: skip);
+  test('the stitches sample K^T v with the correction of the frame, v without it (IMMUCH360-NOTE.md, patch 14)', () {
+    final sources = _shaderSources();
+    final program = gl.link(
+      gl.compile(_glVertexShader, sources['kVertexSource']!),
+      gl.compile(_glFragmentShader, _fragment(sources, 1)),
+    );
+    // Lens 0 looks ahead (the stitch frame: x right, y down, z forward), equidistant, its image circle reaching 95
+    // degrees; each texel holds its own position (red its column, green its row), so the colour of an output pixel
+    // tells the point of the lens it was read from. Lens 1, behind, is plain blue in the second texture.
+    const side = 256;
+    final ramp = arena<Uint8>(side * side * 4);
+    for (var y = 0; y < side; y++) {
+      for (var x = 0; x < side; x++) {
+        final i = (y * side + x) * 4;
+        ramp[i] = x;
+        ramp[i + 1] = y;
+        ramp[i + 2] = 0;
+        ramp[i + 3] = 255;
+      }
+    }
+    final blue = arena<Uint8>(4)
+      ..[0] = 0
+      ..[1] = 0
+      ..[2] = 255
+      ..[3] = 255;
+    void texture(int unit, int width, Pointer<Uint8> pixels) {
+      final name = arena<Uint32>();
+      gl
+        ..genTextures(1, name)
+        ..activeTexture(unit)
+        ..bindTexture(_glTexture2d, name.value)
+        ..texImage2D(_glTexture2d, 0, _glRgba8, width, width, 0, _glRgba, _glUnsignedByte, pixels)
+        ..texParameteri(_glTexture2d, _glTextureMinFilter, _glLinear)
+        ..texParameteri(_glTexture2d, _glTextureMagFilter, _glLinear)
+        ..texParameteri(_glTexture2d, _glTextureWrapS, _glClampToEdge)
+        ..texParameteri(_glTexture2d, _glTextureWrapT, _glClampToEdge);
+    }
+
+    texture(_glTexture0, side, ramp);
+    texture(_glTexture1, 1, blue);
+    gl.activeTexture(_glTexture0);
+    final vertexArray = arena<Uint32>();
+    gl
+      ..genVertexArrays(1, vertexArray)
+      ..bindVertexArray(vertexArray.value)
+      ..useProgram(program)
+      ..viewport(0, 0, size, size);
+    Pointer<Float> matrix(List<double> columns) {
+      final values = arena<Float>(9);
+      for (var i = 0; i < 9; i++) {
+        values[i] = columns[i];
+      }
+      return values;
+    }
+
+    const degrees = math.pi / 180;
+    const focal = (side / 2) / (95 * degrees);
+    // Rodrigues, row major: the rotation by angle about axis
+    List<double> rotation(List<double> axis, double angle) {
+      final n = math.sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+      final (x, y, z) = (axis[0] / n, axis[1] / n, axis[2] / n);
+      final c = math.cos(angle);
+      final s = math.sin(angle);
+      final t = 1 - c;
+      return [
+        t * x * x + c, t * x * y - s * z, t * x * z + s * y, //
+        t * x * y + s * z, t * y * y + c, t * y * z - s * x, //
+        t * x * z - s * y, t * y * z + s * x, t * z * z + c,
+      ];
+    }
+
+    List<double> times(List<double> m, List<double> v) => [
+      for (var r = 0; r < 3; r++) m[r * 3] * v[0] + m[r * 3 + 1] * v[1] + m[r * 3 + 2] * v[2],
+    ];
+    List<double> transposeTimes(List<double> m, List<double> v) => [
+      for (var c = 0; c < 3; c++) m[c] * v[0] + m[3 + c] * v[1] + m[6 + c] * v[2],
+    ];
+    // The colour lens 0 gives the stitch direction s: its canvas pixel, less half a texel (the ramp's value at a
+    // texel centre is its index)
+    (double, double) expectedColour(List<double> s) {
+      final q = math.sqrt(s[0] * s[0] + s[1] * s[1]);
+      final theta = math.atan2(q, s[2]);
+      if (q < 1e-9) {
+        return (side / 2 - 0.5, side / 2 - 0.5);
+      }
+      return (side / 2 + focal * theta * s[0] / q - 0.5, side / 2 + focal * theta * s[1] / q - 0.5);
+    }
+
+    // Draws the view at yaw and pitch with the correction k (row major; null: uStabilize 0) and reads its centre
+    (int, int, int) draw({required double yaw, required double pitch, List<double>? k}) {
+      final cy = math.cos(yaw * degrees);
+      final sy = math.sin(yaw * degrees);
+      final cp = math.cos(pitch * degrees);
+      final sp = math.sin(pitch * degrees);
+      final rows = [cy, -sy * sp, sy * cp, 0.0, cp, sp, -sy, -cy * sp, cy * cp];
+      final tanHalf = math.tan(30 * degrees);
+      int at(String name) => gl.location(program, name);
+      gl
+        ..uniform1i(at('uSource'), 0)
+        ..uniform1i(at('uSource1'), 1)
+        ..uniformMatrix3fv(at('uViewToSphere'), 1, 0, matrix([for (var i = 0; i < 9; i++) rows[(i % 3) * 3 + i ~/ 3]]))
+        ..uniform2f(at('uTanHalfFov'), tanHalf, tanHalf)
+        ..uniform1f(at('uSharp'), 0)
+        ..uniform2f(at('uOutputSize'), size.toDouble(), size.toDouble())
+        ..uniform1f(at('uTexelsPerPixel'), 1)
+        ..uniform1f(at('uTracks'), 1)
+        ..uniform2f(at('uEnabled'), 1, 1)
+        ..uniform1f(at('uSecondTexture'), 1)
+        ..uniformMatrix3fv(at('uViewToLens0'), 1, 0, matrix(const [1, 0, 0, 0, 1, 0, 0, 0, 1]))
+        ..uniformMatrix3fv(at('uViewToLens1'), 1, 0, matrix(const [-1, 0, 0, 0, 1, 0, 0, 0, -1]))
+        ..uniform4f(at('uIntr0'), focal, focal, side / 2, side / 2)
+        ..uniform4f(at('uIntr1'), 1, 1, 0.5, 0.5)
+        ..uniform4f(at('uK0'), 0, 0, 0, 0)
+        ..uniform4f(at('uK1'), 0, 0, 0, 0)
+        ..uniform4f(at('uX0'), 0, 0, 0, 0)
+        ..uniform4f(at('uX1'), 0, 0, 0, 0)
+        ..uniform4f(at('uRegion0'), 0, 0, 1, 1)
+        ..uniform4f(at('uRegion1'), 0, 0, 1, 1)
+        ..uniform1f(at('uTexOf0'), 0)
+        ..uniform1f(at('uTexOf1'), 1)
+        ..uniform1f(at('uEquidistantFocal0'), focal)
+        ..uniform1f(at('uEquidistantFocal1'), 1)
+        ..uniform1f(at('uModel'), 1)
+        ..uniform1f(at('uSquare'), side.toDouble())
+        ..uniform3f(at('uTheta'), 100 * degrees, 85 * degrees, 95 * degrees)
+        // K^T column major is K row major (ProjectionRenderer::SetUniforms, stabilization.h)
+        ..uniform1f(at('uStabilize'), k == null ? 0 : 1)
+        ..uniformMatrix3fv(at('uCorrection'), 1, 0, matrix(k ?? const [1, 0, 0, 0, 1, 0, 0, 0, 1]))
+        ..drawArrays(_glTriangles, 0, 3)
+        ..finish();
+      final out = arena<Uint8>(4);
+      gl.readPixels(size ~/ 2, size ~/ 2, 1, 1, _glRgba, _glUnsignedByte, out);
+      expect(gl.getError(), 0);
+      return (out[0], out[1], out[2]);
+    }
+
+    // The stitch direction of the centre of a view at yaw and pitch: the sphere's (y up) with y turned down
+    List<double> viewDirection(double yaw, double pitch) {
+      final d = [
+        math.sin(yaw * degrees) * math.cos(pitch * degrees),
+        math.sin(pitch * degrees),
+        math.cos(yaw * degrees) * math.cos(pitch * degrees),
+      ];
+      return [d[0], -d[1], d[2]];
+    }
+
+    void expectRead((int, int, int) read, List<double> s, String reason) {
+      final (red, green) = expectedColour(s);
+      expect(read.$3, 0, reason: '$reason: lens 0');
+      expect(read.$1.toDouble(), closeTo(red, 1.5), reason: '$reason: column');
+      expect(read.$2.toDouble(), closeTo(green, 1.5), reason: '$reason: row');
+    }
+
+    final views = [(0.0, 0.0), (25.0, 10.0), (-40.0, -20.0), (60.0, 30.0)];
+    // Off: the direction of the view itself
+    for (final (yaw, pitch) in views) {
+      expectRead(draw(yaw: yaw, pitch: pitch), viewDirection(yaw, pitch), 'off, $yaw $pitch');
+    }
+    // A camera pitched down 10 degrees (the correction about x by -10, y down): the front samples the point 10
+    // degrees above the centre of the lens, the horizon
+    final pitched = rotation(const [1, 0, 0], -10 * degrees);
+    expectRead(draw(yaw: 0, pitch: 0, k: pitched), [0, -math.sin(10 * degrees), math.cos(10 * degrees)], 'pitched');
+    // Corrections about several axes: K^T v, never K v
+    final corrections = [
+      rotation(const [0, 1, 0], 20 * degrees),
+      rotation(const [0, 0, 1], 15 * degrees),
+      rotation(const [1, -2, 0.5], 25 * degrees),
+      rotation(const [-0.3, 0.4, 1], -30 * degrees),
+    ];
+    var mutations = 0;
+    for (final k in corrections) {
+      for (final (yaw, pitch) in views) {
+        final v = viewDirection(yaw, pitch);
+        final read = draw(yaw: yaw, pitch: pitch, k: k);
+        final right = transposeTimes(k, v);
+        expectRead(read, right, 'K^T v at $yaw $pitch');
+        // The mutation K v (a turn doubled instead of undone) is told apart wherever it reads elsewhere: everywhere
+        // but the roll seen at its own axis
+        final (red, green) = expectedColour(right);
+        final (wrongRed, wrongGreen) = expectedColour(times(k, v));
+        if ((red - wrongRed).abs() + (green - wrongGreen).abs() > 6) {
+          mutations++;
+          expect(
+            (read.$1 - wrongRed).abs() + (read.$2 - wrongGreen).abs(),
+            greaterThan(6),
+            reason: 'K v at $yaw $pitch',
+          );
+        }
+      }
+    }
+    expect(mutations, 15);
   }, skip: skip);
 }

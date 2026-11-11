@@ -170,6 +170,9 @@ class ProjectionStats {
     this.partnerFrames = 0,
     this.partnerOffsetMs = 0,
     this.partnerSpeed = 0,
+    this.stabilizedFrames = 0,
+    this.frameTime,
+    this.stabilizing = false,
   });
 
   factory ProjectionStats.fromMap(Map<Object?, Object?> map) {
@@ -205,6 +208,12 @@ class ProjectionStats {
       partnerFrames: map['partnerFrames'] as int? ?? 0,
       partnerOffsetMs: (map['partnerOffsetMs'] as num?)?.toDouble() ?? 0,
       partnerSpeed: (map['partnerSpeed'] as num?)?.toDouble() ?? 0,
+      stabilizedFrames: map['stabilizedFrames'] as int? ?? 0,
+      frameTime: switch ((map['frameTime'] as num?)?.toDouble()) {
+        final double time when time >= 0 => time,
+        _ => null,
+      },
+      stabilizing: map['stabilizing'] == true,
     );
   }
 
@@ -254,6 +263,37 @@ class ProjectionStats {
   /// the first correction)
   final double partnerOffsetMs;
   final double partnerSpeed;
+
+  /// The stabilisation (IMMUCH360-NOTE.md, patch 14): the views drawn with a
+  /// correction since the previous call, the time in seconds of the frame of
+  /// the last view drawn (null when unknown, or when nothing stabilises), and
+  /// whether a correction applies (on, with a table)
+  final int stabilizedFrames;
+  final double? frameTime;
+  final bool stabilizing;
+}
+
+/// The answer of [ProjectionOutput.setStabilization]
+@immutable
+class StabilizationResult {
+  const StabilizationResult({required this.ok, this.reason});
+
+  factory StabilizationResult.fromMap(Object? value) {
+    final map = value is Map ? value : const {};
+    return StabilizationResult(
+      ok: map['ok'] == true,
+      reason: map['reason'] as String?,
+    );
+  }
+
+  final bool ok;
+
+  /// Why not: "no video output", or what is wrong with the table
+  final String? reason;
+
+  @override
+  String toString() =>
+      'StabilizationResult(${ok ? 'ok' : 'refused: $reason'})';
 }
 
 /// The method calls of renderer C on the channel of media_kit_video
@@ -300,6 +340,35 @@ abstract final class ProjectionOutput {
       ProjectionResult.fromMap(await _channel.invokeMethod<Object?>(
         'VideoOutputManager.SetPartner',
         {'handle': handle, 'partner': partner ?? 0},
+      ));
+
+  /// The stabilisation of a raw 360 video (IMMUCH360-NOTE.md, patch 14): the
+  /// stitches turn the frame drawn by its correction while [enabled], from
+  /// [timesUs] (the presentation time of each frame in microseconds, rising)
+  /// and [corrections] (four values a frame, the unit quaternion w, x, y, z
+  /// that shows the point of the stitched sphere at direction d at K d, in
+  /// the stitch's view frame: x right, y down, z forward). [replaceTable]
+  /// false keeps the table given before (a switch flipped); true replaces it,
+  /// or removes it when [timesUs] is null. The frame shown is drawn again at
+  /// once, a paused one included. The time of each frame is mpv's time-pos
+  /// when the frame is handed over, corrected by its target time (see
+  /// windows/stabilization.h).
+  static Future<StabilizationResult> setStabilization(
+    int handle, {
+    required bool enabled,
+    bool replaceTable = false,
+    Int64List? timesUs,
+    Float64List? corrections,
+  }) async =>
+      StabilizationResult.fromMap(await _channel.invokeMethod<Object?>(
+        'VideoOutputManager.SetStabilization',
+        {
+          'handle': handle,
+          'enabled': enabled,
+          'table': replaceTable,
+          if (replaceTable && timesUs != null) 'timesUs': timesUs,
+          if (replaceTable && corrections != null) 'corrections': corrections,
+        },
       ));
 
   /// What the plugin drew since the previous call; [probe] asks for five pixels of the next draw, given by the

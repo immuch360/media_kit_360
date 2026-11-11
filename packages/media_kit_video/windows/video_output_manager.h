@@ -55,6 +55,14 @@ class VideoOutputManager {
   // False when the player has no video output.
   bool SetView(int64_t handle, const ProjectionView& view);
 
+  // Immuch360: |VideoOutput::SetStabilization| (IMMUCH360-NOTE.md, patch
+  // 14), on the platform thread without waiting for a thread. False when the
+  // player has no video output.
+  bool SetStabilization(
+      int64_t handle,
+      bool enabled,
+      std::optional<std::shared_ptr<const stabilization::Table>> table);
+
   // Immuch360: |VideoOutput::ProjectionStats|, null without a video output.
   std::optional<flutter::EncodableMap> ProjectionStats(int64_t handle,
                                                        bool probe);

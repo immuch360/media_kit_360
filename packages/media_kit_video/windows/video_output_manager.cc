@@ -84,6 +84,19 @@ bool VideoOutputManager::SetView(int64_t handle, const ProjectionView& view) {
   return true;
 }
 
+bool VideoOutputManager::SetStabilization(
+    int64_t handle,
+    bool enabled,
+    std::optional<std::shared_ptr<const stabilization::Table>> table) {
+  std::lock_guard<std::mutex> lookup_lock(lookup_mutex_);
+  auto output = lookup_.find(handle);
+  if (output == lookup_.end()) {
+    return false;
+  }
+  output->second->SetStabilization(enabled, std::move(table));
+  return true;
+}
+
 std::optional<flutter::EncodableMap> VideoOutputManager::ProjectionStats(
     int64_t handle,
     bool probe) {

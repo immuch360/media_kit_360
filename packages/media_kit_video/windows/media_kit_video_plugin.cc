@@ -94,6 +94,43 @@ std::vector<float> ToFloats(const flutter::EncodableValue* value) {
   return floats;
 }
 
+// Immuch360: the times of a stabilisation table (Int64List, or a list)
+std::vector<int64_t> ToInt64s(const flutter::EncodableValue* value) {
+  std::vector<int64_t> values;
+  if (value == nullptr) {
+    return values;
+  }
+  if (auto longs = std::get_if<std::vector<int64_t>>(value)) {
+    values = *longs;
+  } else if (auto ints = std::get_if<std::vector<int32_t>>(value)) {
+    values.assign(ints->begin(), ints->end());
+  } else if (auto list = std::get_if<flutter::EncodableList>(value)) {
+    for (const auto& item : *list) {
+      values.push_back(ToInt64(&item, 0));
+    }
+  }
+  return values;
+}
+
+// Immuch360: the corrections of a stabilisation table (Float64List,
+// Float32List, or a list)
+std::vector<double> ToDoubles(const flutter::EncodableValue* value) {
+  std::vector<double> values;
+  if (value == nullptr) {
+    return values;
+  }
+  if (auto doubles = std::get_if<std::vector<double>>(value)) {
+    values = *doubles;
+  } else if (auto singles = std::get_if<std::vector<float>>(value)) {
+    values.assign(singles->begin(), singles->end());
+  } else if (auto list = std::get_if<flutter::EncodableList>(value)) {
+    for (const auto& item : *list) {
+      values.push_back(ToDouble(&item, 0.0));
+    }
+  }
+  return values;
+}
+
 void CopyFloats(const flutter::EncodableValue* value, float* out, size_t size) {
   const auto floats = ToFloats(value);
   if (floats.size() == size) {
@@ -372,6 +409,41 @@ void MediaKitVideoPlugin::HandleMethodCall(
     const auto known = video_output_manager_->SetView(
         ToInt64(Find(arguments, "handle"), 0), view);
     result->Success(flutter::EncodableValue(known));
+  } else if (method_call.method_name().compare(
+                 "VideoOutputManager.SetStabilization") == 0) {
+    // Immuch360: the stabilisation of a raw 360 video (patch 14). "table"
+    // false keeps the corrections given before; true replaces them with
+    // "timesUs" and "corrections", or removes them when those are missing.
+    const auto& arguments =
+        std::get<flutter::EncodableMap>(*method_call.arguments());
+    flutter::EncodableMap answer;
+    std::optional<std::shared_ptr<const stabilization::Table>> table;
+    if (ToBool(Find(arguments, "table"), false)) {
+      auto times = ToInt64s(Find(arguments, "timesUs"));
+      auto corrections = ToDoubles(Find(arguments, "corrections"));
+      std::shared_ptr<const stabilization::Table> made;
+      if (!times.empty()) {
+        std::string reason;
+        made = stabilization::Table::Of(std::move(times),
+                                        std::move(corrections), &reason);
+        if (made == nullptr) {
+          answer[flutter::EncodableValue("reason")] =
+              flutter::EncodableValue(reason);
+        }
+      }
+      table = made;
+    }
+    const bool refused = answer.count(flutter::EncodableValue("reason")) > 0;
+    const auto known =
+        !refused && video_output_manager_->SetStabilization(
+                        ToInt64(Find(arguments, "handle"), 0),
+                        ToBool(Find(arguments, "enabled"), false), table);
+    if (!refused && !known) {
+      answer[flutter::EncodableValue("reason")] =
+          flutter::EncodableValue("no video output");
+    }
+    answer[flutter::EncodableValue("ok")] = flutter::EncodableValue(known);
+    result->Success(flutter::EncodableValue(answer));
   } else if (method_call.method_name().compare(
                  "VideoOutputManager.ProjectionStats") == 0) {
     const auto& arguments =

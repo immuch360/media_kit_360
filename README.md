@@ -39,6 +39,14 @@ It draws an equirectangular frame (mono, one eye of a stereo frame over under or
 front half for VR180), and it stitches raw dual fisheye videos as they play (Mei, equidistant and Kannala-Brandt lens
 models, GoPro EAC pairs), with the two streams of a raw file in one player or in two players drawn together.
 
+A raw video can also play stabilised with its camera's own motion track (since 1.1.0). The app gives a table of one
+rotation per frame, keyed on the frame's presentation time, once. The pass turns each frame by its own rotation, so
+the horizon stays level and the shake goes. libmpv's render API gives no time with the frame it draws, so the plugin
+reads mpv's `time-pos` when mpv hands the frame over and checks it against the frame's target display time. Measured
+against frames that carry their index (Windows, this repository's libmpv, ANGLE on an Intel UHD), every frame of
+steady playback, seeks, pauses and speed changes got its own rotation; the misses were the first draws of a file or
+after a seek, one frame off at most.
+
 ### What was measured
 
 On 9 October 2026, a Windows 11 laptop with an Intel UHD integrated GPU and an NVIDIA GeForce RTX 4060 Laptop GPU, 16 GB
@@ -134,6 +142,7 @@ view, zoom with the wheel and change the projection, and runs the renderer probe
 | `setTier(tier)` | another size of the intermediate texture, at most once a second once a frame was drawn |
 | `stats(probe:)` | what the plugin drew since the previous call: frames, redraws, failures, draw times |
 | `setPartner(other)` | pairs a second player that decodes stream 1 of a raw file |
+| `setStabilization(table, enabled:)` | the rotation of each frame of a raw video (`PluginStabilization`: presentation times in µs and unit quaternions), sent once; the switch alone afterwards |
 | `detach()`, `dispose()` | the texture shows the flat frame again; `dispose` also ends the renderer |
 
 `PluginProjection.equirect` takes a `PluginStereoLayout` (mono, top bottom, left right), a `PluginCoverage` (full or

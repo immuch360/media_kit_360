@@ -4,7 +4,8 @@
 // start tier per GPU, from what DXGI says of the GPU in use when it is the one ANGLE draws on (an Intel Arc built into
 // the processor is not a card), else from its name; and the rules for the player: one view per Flutter frame however
 // many events come, never a second view while the plugin has not answered the first, the sharper filter once the view
-// rests, window sizes merged, a tier change at most once a second, mpv's keepaspect set and given back.
+// rests, window sizes merged, a tier change at most once a second, mpv's keepaspect set and given back; the
+// stabilisation table sent once, the switch alone afterwards, taken back at the detach.
 //
 // Moved here from the Immuch360 app (mobile/test/desktop/video/plugin_renderer_test.dart of
 // github.com/freeKC/Immuch360).
@@ -12,6 +13,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' show Size;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -144,7 +146,30 @@ class _FakeChannel implements PluginChannel {
     final refused = refusePartner;
     return refused == null ? const ProjectionResult(ok: true) : ProjectionResult(ok: false, reason: refused);
   }
+
+  /// The stabilisation calls: the switch, whether the table was replaced, and the table
+  final stabilizations = <(bool, bool, PluginStabilization?)>[];
+
+  /// Why the plugin refuses a table, null while it accepts
+  String? refuseTable;
+
+  @override
+  Future<StabilizationResult> setStabilization(
+    int handle, {
+    required bool enabled,
+    required bool replaceTable,
+    PluginStabilization? table,
+  }) async {
+    stabilizations.add((enabled, replaceTable, table));
+    final refused = refuseTable;
+    return refused == null ? const StabilizationResult(ok: true) : StabilizationResult(ok: false, reason: refused);
+  }
 }
+
+PluginStabilization _table(int frames) => PluginStabilization(
+  timesUs: Int64List.fromList([for (var i = 0; i < frames; i++) i * 33367]),
+  corrections: Float64List.fromList([for (var i = 0; i < frames; i++) ...[1.0, 0.0, 0.0, 0.0]]),
+);
 
 List<double> _transpose(List<double> rowMajor) => [for (var i = 0; i < 9; i++) rowMajor[(i % 3) * 3 + i ~/ 3]];
 
@@ -549,6 +574,87 @@ void main() {
         await plugin.attach(projection: firstStream(), outputSize: const Size(1600, 900));
         expect(await plugin.setPartner(second()), isFalse);
         expect(channel.partners, isEmpty);
+      });
+    });
+
+    group('the stabilisation of a raw video', () {
+      testWidgets('a table given before the attach goes with it, once', (tester) async {
+        final plugin = renderer();
+        final table = _table(3);
+        expect(await plugin.setStabilization(table, enabled: true), isFalse, reason: 'kept for the attach');
+        expect(channel.stabilizations, isEmpty);
+        await plugin.attach(projection: PluginProjection.equirect(), outputSize: const Size(1600, 900));
+        expect(channel.stabilizations, [(true, true, table)]);
+        // The same table again: nothing to send
+        expect(await plugin.setStabilization(table, enabled: true), isTrue);
+        expect(channel.stabilizations, hasLength(1));
+      });
+
+      testWidgets('the switch alone once the table is there; a new table replaces it', (tester) async {
+        final plugin = renderer();
+        await plugin.attach(projection: PluginProjection.equirect(), outputSize: const Size(1600, 900));
+        expect(channel.stabilizations, isEmpty, reason: 'nothing to send without a table');
+        final table = _table(2);
+        expect(await plugin.setStabilization(table, enabled: true), isTrue);
+        expect(await plugin.setStabilization(table, enabled: false), isTrue);
+        expect(await plugin.setStabilization(table, enabled: true), isTrue);
+        final other = _table(4);
+        expect(await plugin.setStabilization(other, enabled: true), isTrue);
+        expect(channel.stabilizations, [
+          (true, true, table),
+          (false, false, table),
+          (true, false, table),
+          (true, true, other),
+        ]);
+        expect(plugin.stabilization, other);
+        expect(plugin.stabilizationEnabled, isTrue);
+      });
+
+      testWidgets('the detach takes the table out of the player, the next attach gives it again', (tester) async {
+        final plugin = renderer();
+        await plugin.attach(projection: PluginProjection.equirect(), outputSize: const Size(1600, 900));
+        final table = _table(2);
+        await plugin.setStabilization(table, enabled: true);
+        await plugin.detach();
+        expect(channel.stabilizations.last, (false, true, null));
+        expect(
+          channel.calls.map((call) => call.name).where((name) => name == 'disable'),
+          hasLength(1),
+          reason: 'taken out before the player goes flat',
+        );
+        await plugin.attach(projection: PluginProjection.equirect(), outputSize: const Size(1600, 900));
+        expect(channel.stabilizations.last, (true, true, table));
+      });
+
+      testWidgets('a detach with nothing sent says nothing of a table', (tester) async {
+        final plugin = renderer();
+        await plugin.attach(projection: PluginProjection.equirect(), outputSize: const Size(1600, 900));
+        await plugin.detach();
+        expect(channel.stabilizations, isEmpty);
+      });
+
+      testWidgets('a table the plugin refuses is sent again with the next call', (tester) async {
+        final plugin = renderer();
+        await plugin.attach(projection: PluginProjection.equirect(), outputSize: const Size(1600, 900));
+        final table = _table(2);
+        channel.refuseTable = 'frame 1 has a correction that is no rotation';
+        expect(await plugin.setStabilization(table, enabled: true), isFalse);
+        channel.refuseTable = null;
+        expect(await plugin.setStabilization(table, enabled: true), isTrue);
+        expect(channel.stabilizations.map((call) => call.$2), [true, true]);
+      });
+
+      test('the statistics tell the frame time and the corrected views', () {
+        final stats = ProjectionStats.fromMap({
+          'enabled': true,
+          'frames': 2,
+          'stabilizedFrames': 2,
+          'frameTime': 1.5,
+          'stabilizing': true,
+        });
+        expect((stats.stabilizedFrames, stats.frameTime, stats.stabilizing), (2, 1.5, true));
+        final unknown = ProjectionStats.fromMap({'enabled': true, 'frameTime': -1.0});
+        expect((unknown.stabilizedFrames, unknown.frameTime, unknown.stabilizing), (0, null, false));
       });
     });
 

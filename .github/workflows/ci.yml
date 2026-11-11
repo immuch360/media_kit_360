@@ -50,6 +50,14 @@ jobs:
         working-directory: packages/media_kit_video
         run: flutter test
 
+      # The stabilisation of renderer C (windows/stabilization.h, IMMUCH360-NOTE.md patch 14): the table lookup, the
+      # sign convention of the correction and the frame clock, with no Windows header
+      - name: Stabilisation tests
+        working-directory: packages/media_kit_video/windows/test
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -I.. stabilization_test.cc -o "$RUNNER_TEMP/stabilization_test"
+          "$RUNNER_TEMP/stabilization_test"
+
   linux:
     name: Linux build of the example
     runs-on: ubuntu-latest

@@ -254,7 +254,8 @@ void ProjectionRenderer::SetUniforms(GLuint program,
                                      const ProjectionView& view,
                                      int32_t width,
                                      int32_t height,
-                                     bool second) {
+                                     bool second,
+                                     const float* correction) {
   const auto location = [program](const char* name) {
     return glGetUniformLocation(program, name);
   };
@@ -311,6 +312,11 @@ void ProjectionRenderer::SetUniforms(GLuint program,
   glUniform2fv(location("uEnabled"), 1, enabled);
   glUniform1i(location("uSource1"), 1);
   glUniform1f(location("uSecondTexture"), second ? 1.0f : 0.0f);
+  // The stabilisation of the frame (patch 14): identity when there is none
+  static const GLfloat kIdentity[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+  glUniform1f(location("uStabilize"), correction != nullptr ? 1.0f : 0.0f);
+  glUniformMatrix3fv(location("uCorrection"), 1, GL_FALSE,
+                     correction != nullptr ? correction : kIdentity);
   for (const auto& [name, values] : setup.uniforms) {
     if (!IsStitchUniform(name)) {
       continue;
@@ -346,7 +352,8 @@ bool ProjectionRenderer::DrawView(const ProjectionSetup& setup,
                                   const ProjectionView& view,
                                   int32_t width,
                                   int32_t height,
-                                  GLuint second_texture) {
+                                  GLuint second_texture,
+                                  const float* correction) {
   if (!prepared_ || frame_texture_ == 0 || !has_frame_) {
     return false;
   }
@@ -374,7 +381,7 @@ bool ProjectionRenderer::DrawView(const ProjectionSetup& setup,
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, frame_texture_);
   bind_sampler_(0, 0);
-  SetUniforms(program, setup, view, width, height, second);
+  SetUniforms(program, setup, view, width, height, second, correction);
   glDrawArrays(GL_TRIANGLES, 0, 3);
   // The defaults mpv expects at its next render (render_gl.h, "OpenGL state")
   if (second) {

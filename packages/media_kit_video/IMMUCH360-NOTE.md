@@ -253,6 +253,37 @@ Patches:
    support folder), the projection of its assets (`projection_params.dart`), its two lens raw file logic and its page.
    The plugin renderer test runs on every system; the shader test needs ANGLE, so the Windows build of the example
    app (`MEDIA_KIT_360_BUILD_DIR` names another build folder).
+14. Windows, renderer C stabilises a raw 360 video with its camera's motion (`windows/stabilization.h`,
+   `windows/test/stabilization_test.cc`, `windows/projection_shaders.h`, `windows/projection_renderer.{h,cc}`,
+   `windows/video_output.{h,cc}`, `windows/video_output_manager.{h,cc}`, `windows/media_kit_video_plugin.cc`,
+   `lib/src/projection_output.dart`, `lib/src/sphere/plugin_renderer.dart`, 12 November 2026, release 1.1.0). The app
+   reads the motion track of an Insta360, GoPro or DJI file and builds one correction per frame (issue 14 of the app),
+   keyed on the frame's presentation time: a unit quaternion K that shows the point of the stitched sphere at
+   direction d (the stitch's view frame, x right, y down, z forward) at K d, the convention of its Android player.
+   `VideoOutputManager.SetStabilization` (handle, enabled, and a table of times in microseconds and four values a frame
+   when "table" is true; none removes it) keeps the table in the output, checked as the Android player checks it
+   (rising times, unit quaternions). The stitch passes read `stitch(uCorrection * v)` when `uStabilize` is 1, with
+   uCorrection = K^T of the frame drawn (column major, which is K row major); 0, the value of an unset uniform, draws
+   as before. The time of the frame: libmpv's render API gives none with the frame it draws. mpv sets `time-pos` to a
+   frame's time when it hands it over to vo_libmpv (with `video-timing-offset` 0, at its display time), and the next
+   frame only at the next display time, so `time-pos` read when mpv says it has a frame is that frame's, unless the draw
+   comes after the next frame's display time: then mpv has handed the next one over and `time-pos` is one frame ahead.
+   `FrameClock` reads the frame's target time (`mpv_render_context_get_info`, `MPV_RENDER_PARAM_NEXT_FRAME_INFO`) with
+   `mpv_get_time_us`: in time, `time-pos`; late, whichever of `time-pos` and the frame before it the last frame drawn in
+   time puts nearer (two frames at most, else `time-pos`). The target time is in nanoseconds in mpv `0b7ed670` (the
+   pinned build) and in microseconds in mpv 0.35: a target far beyond the clock is taken for nanoseconds. Measured on
+   11 November 2026 with clips whose frames carry their index (25, 29.97, 30, 50 and 60 frames a second, H.264 and HEVC,
+   audio or none, an audio track starting early), a draw loop copying `DrawProjection` with delays of zero to two and a
+   half frames, seeks, a pause, speed 1.5: on Windows with the libmpv and ANGLE of the app (Intel UHD, software and
+   d3d11va decoding), 604 of 18052 draws (3.35%) one frame off with `time-pos` alone, 27 (0.15%) with the rule, all
+   among the first five draws of a file; on Linux with mpv 0.35, 324 of 14336 and 3. The first draw after a seek has no
+   target time and keeps `time-pos`, at most one frame off (31 ms at 25 frames a second). The frame time is read only
+   while a table is on, so other videos make no more calls into mpv; a paused frame drawn before the table came takes
+   `time-pos` as its time and is drawn again corrected at once. Two players (patch 7): the primary's frame time is read
+   with its pending frame (`NotePending`). `ProjectionStats` adds `stabilizedFrames`, `frameTime` and `stabilizing`.
+   `PluginRenderer.setStabilization(table, enabled:)` sends the table once, the switch alone afterwards, and `detach`
+   takes the table out of the player before it may go to another video. The equirectangular pass is unchanged: a
+   stitched file has no table.
 
 Not done yet (plan 20-plan-desktop.md, 2.2): the D3D11 device on the adapter Flutter uses. It is not needed on a
 laptop with two GPUs: Flutter's ANGLE, the plugin's device and display and mpv's decoder all take the adapter DXGI

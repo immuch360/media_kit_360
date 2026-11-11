@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.0, 12 November 2026
+
+- **Stabilisation of raw 360° videos.** Renderer C turns each frame of a raw fisheye or GoPro EAC video by a rotation
+  of its own, from a table the app gives once (`PluginRenderer.setStabilization`, `PluginStabilization`): one
+  presentation time and one unit quaternion per frame, the convention of Immuch360's Android player (the point of the
+  stitched sphere at direction d is shown at K d). The pass reads the stitch at K^T v; `uStabilize` at 0 keeps every
+  caller that knows nothing of it as before. The switch flips without sending the table again, and a paused frame is
+  drawn again at once.
+- **The time of the frame drawn.** libmpv's render API gives none, so the plugin reads mpv's `time-pos` when mpv hands
+  a frame over and corrects it by one frame when the frame's target time (`MPV_RENDER_PARAM_NEXT_FRAME_INFO`) says
+  the draw came after the next frame's display time. Measured with frames carrying their index: 3.35% of the draws one
+  frame off with `time-pos` alone on Windows, 0.15% with the rule, all of them among the first five draws of a file.
+  The target time is in nanoseconds in the libmpv of this repository (mpv `0b7ed670`), in microseconds in older ones:
+  both are read.
+- **Statistics:** `ProjectionStats.stabilizedFrames`, `frameTime` and `stabilizing`.
+- **Tests:** the table lookup, the sign convention (four checks of the Android player ported, fifty random rotations,
+  a mutation) and the frame clock in C++ (`windows/test/stabilization_test.cc`, run by the analyze job); the pass
+  reading K^T v and never K v in ANGLE (`plugin_shaders_windows_test.dart`, Windows job).
+
 ## 1.0.1, 10 November 2026
 
 - **libmpv from libmpv-builds.** media_kit_libs_windows_video now downloads libmpv from the release

@@ -31,6 +31,7 @@
 
 #include "angle_surface_manager.h"
 #include "projection_renderer.h"
+#include "stabilization.h"
 #include "thread_pool.h"
 
 typedef struct _VideoOutputConfiguration {
@@ -134,6 +135,14 @@ class VideoOutput {
   // "ok", and "reason" when false.
   flutter::EncodableMap SetPartner(VideoOutput* partner);
 
+  // Immuch360: the stabilisation of a raw 360 video (IMMUCH360-NOTE.md, patch
+  // 14), from any thread. |enabled| turns the correction on or off; |table|,
+  // when given, replaces the corrections (null removes them). The frame shown
+  // is drawn again at once, a paused one included.
+  void SetStabilization(
+      bool enabled,
+      std::optional<std::shared_ptr<const stabilization::Table>> table);
+
  private:
   // Immuch360: the setup of renderer C, null when it is off.
   std::shared_ptr<const ProjectionSetup> CurrentProjection();
@@ -170,6 +179,20 @@ class VideoOutput {
   void Unpair();
   // A draw of the pair from the thread pool, for |PairTimer|.
   void PostPairDraw();
+
+  // Immuch360, the stabilisation (patch 14). The time of the frame mpv is
+  // about to hand over, in seconds, -1 when unknown: read when mpv says it
+  // has a frame, before it is drawn (stabilization.h, |FrameClock|). Thread
+  // pool only, the context of this player current.
+  double ReadFrameTime();
+  // Whether a correction applies: on, with a table
+  bool Stabilizing();
+  // The time of the frame kept in the intermediate texture, when it was drawn
+  // while nothing stabilised: time-pos, the frame of a paused video
+  void KnowTimeOfFrameKept();
+  // The correction of the frame at |frame_time| (uCorrection, column major)
+  // into |out|; false when nothing stabilises it (off, no table, no time).
+  bool CorrectionAt(double frame_time, float out[9]);
 
 
   void NotifyRender();
@@ -258,8 +281,23 @@ class VideoOutput {
     int64_t partner_frames = 0;
     double partner_offset_ms = 0.0;
     double partner_speed = 0.0;
+    // Immuch360, the stabilisation (patch 14): views drawn with a
+    // correction, and the time of the frame of the last view drawn (-1 when
+    // unknown)
+    int64_t stabilized = 0;
+    double frame_time = -1.0;
   };
   ProjectionCounters projection_counters_;
+
+  // Immuch360, the stabilisation (patch 14): the setting and the table under
+  // |projection_mutex_|; the clock, the frame period and the time of the
+  // frame in the intermediate texture on the thread pool only.
+  bool stabilization_enabled_ = false;
+  std::shared_ptr<const stabilization::Table> stabilization_table_ = nullptr;
+  stabilization::FrameClock frame_clock_;
+  double frame_period_ = 0.0;
+  int32_t frame_period_reads_ = 0;
+  double frame_time_ = -1.0;
 
   // Immuch360: the pairing of two players (patch 7). |partner_| on the
   // primary player, |primary_| on the secondary one; thread pool only, as
@@ -269,6 +307,8 @@ class VideoOutput {
     bool waiting = false;
     double pts = -1.0;
     int64_t since_ns = 0;
+    // The frame's time for the stabilisation (patch 14), -1 when unknown
+    double frame_time = -1.0;
   };
   struct PairState {
     // The frame period and the last time drawn, to tell the frames apart

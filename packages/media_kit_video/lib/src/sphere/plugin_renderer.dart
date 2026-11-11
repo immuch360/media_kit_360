@@ -13,7 +13,9 @@
 // - the output follows the window (physical pixels, at most maxOutputHeight lines from the first frame), the
 //   intermediate texture follows the video and the tier only;
 // - a tier changes at most once a second once a frame was drawn, since mpv then draws its frame again at the new size;
-// - a paused video is redrawn by the plugin from the frame it keeps, without mpv.
+// - a paused video is redrawn by the plugin from the frame it keeps, without mpv;
+// - a raw video stabilised with its camera's motion (setStabilization) has its table sent once; the plugin finds the
+//   correction of each frame it draws at that frame's time (windows/stabilization.h), so nothing goes per frame.
 //
 // What a 360 player page calls: PluginRenderer.forController(controller), then attach before the file opens (so that
 // the texture is the view from the first frame), setView on every drag, wheel or key event, setOutputSize when the
@@ -362,6 +364,25 @@ class PluginView {
   String toString() => 'PluginView($yaw, $pitch, $fov)';
 }
 
+/// The stabilisation of a raw 360 video with the motion track of its camera (IMMUCH360-NOTE.md, patch 14): for each
+/// frame, its presentation time in microseconds ([timesUs], rising) and its correction ([corrections], four values a
+/// frame, the unit quaternion w, x, y, z). A point of the stitched sphere at direction d of the stitch's view frame
+/// (x right, y down, z forward) is shown at K d, K the frame's correction: the convention of the app's table and of
+/// its Android player. Only the stitches (raw fisheye and EAC pairs) use it. The renderer compares tables by
+/// identity: a new table is a new object, not a changed list.
+class PluginStabilization {
+  PluginStabilization({required this.timesUs, required this.corrections})
+    : assert(corrections.length == 4 * timesUs.length, '4 values a frame');
+
+  final Int64List timesUs;
+  final Float64List corrections;
+
+  int get length => timesUs.length;
+
+  @override
+  String toString() => 'PluginStabilization($length frames)';
+}
+
 /// The calls of the plugin, so that the tests give their own (ProjectionOutput's static calls otherwise)
 abstract interface class PluginChannel {
   Future<ProjectionResult> enable(int handle, ProjectionSetup setup);
@@ -369,6 +390,14 @@ abstract interface class PluginChannel {
   Future<bool> setView(int handle, PluginView view, {required bool sharp});
   Future<ProjectionStats?> stats(int handle, {bool probe = false});
   Future<ProjectionResult> setPartner(int handle, int? partner);
+
+  /// [ProjectionOutput.setStabilization]: [table] replaces the plugin's when [replaceTable] (null removes it)
+  Future<StabilizationResult> setStabilization(
+    int handle, {
+    required bool enabled,
+    required bool replaceTable,
+    PluginStabilization? table,
+  });
 }
 
 class _MethodChannelPlugin implements PluginChannel {
@@ -389,6 +418,20 @@ class _MethodChannelPlugin implements PluginChannel {
 
   @override
   Future<ProjectionResult> setPartner(int handle, int? partner) => ProjectionOutput.setPartner(handle, partner);
+
+  @override
+  Future<StabilizationResult> setStabilization(
+    int handle, {
+    required bool enabled,
+    required bool replaceTable,
+    PluginStabilization? table,
+  }) => ProjectionOutput.setStabilization(
+    handle,
+    enabled: enabled,
+    replaceTable: replaceTable,
+    timesUs: table?.timesUs,
+    corrections: table?.corrections,
+  );
 }
 
 /// The answer of [PluginRenderer.attach]: whether renderer C draws the player, and if not why (the probe then tries
@@ -512,11 +555,19 @@ class PluginRenderer {
   /// The renderer of the second player of a pair ([setPartner]): its tier follows this one's
   PluginRenderer? _partner;
 
+  // The stabilisation ([setStabilization]): the table and the switch asked, and what the plugin has
+  PluginStabilization? _stabilization;
+  bool _stabilizationEnabled = false;
+  PluginStabilization? _sentStabilization;
+  bool? _sentStabilizationEnabled;
+
   bool get attached => _attached;
   PluginTier? get tier => _tier;
   PluginProjection? get projection => _projection;
   String? get glRenderer => _glRenderer;
   PluginView get view => _view;
+  PluginStabilization? get stabilization => _stabilization;
+  bool get stabilizationEnabled => _stabilizationEnabled;
 
   /// Draws the player through renderer C from now on: [projection] at [tier] (or the start tier of the GPU when
   /// null), into an output of [outputSize] physical pixels capped at [maxOutputHeight] lines. Call it before the file
@@ -568,6 +619,8 @@ class PluginRenderer {
       _sentView = null;
       _sentSharp = null;
       _scheduleViewSend();
+      // A table given before the attach, or kept from the previous file of the same video
+      await _sendStabilization();
       _log.info('renderer C: ${chosen.name}, ${result.glRenderer}, ${result.outputWidth}x${result.outputHeight}');
       done.complete(
         PluginAttach(
@@ -688,6 +741,45 @@ class PluginRenderer {
     return true;
   });
 
+  /// The stabilisation of the raw video this player draws: [table] the corrections of its frames (null for none), the
+  /// correction applied while [enabled] (the player's switch). The table goes to the plugin once (a switch flipped
+  /// sends the switch only), and is kept for the next attach of the same renderer; [detach] takes it out of the
+  /// plugin, so that a player handed to another video does not keep it. The frame shown is drawn again at once, a
+  /// paused one included. False while not attached (kept for the attach) or when the plugin refused the table.
+  Future<bool> setStabilization(PluginStabilization? table, {required bool enabled}) => _change(() async {
+    _stabilization = table;
+    _stabilizationEnabled = enabled;
+    return _sendStabilization();
+  });
+
+  Future<bool> _sendStabilization() async {
+    final handle = _handleValue;
+    if (!_attached || handle == null) {
+      return false;
+    }
+    final table = _stabilization;
+    final enabled = _stabilizationEnabled;
+    final replace = !identical(table, _sentStabilization);
+    if (!replace && enabled == _sentStabilizationEnabled) {
+      return true;
+    }
+    if (table == null && _sentStabilizationEnabled == null) {
+      // Nothing was ever sent: nothing to take back
+      return true;
+    }
+    final result = await _channel.setStabilization(handle, enabled: enabled, replaceTable: replace, table: table);
+    if (!result.ok) {
+      _log.warning('renderer C refused the stabilisation: ${result.reason}');
+      return false;
+    }
+    _sentStabilization = table;
+    _sentStabilizationEnabled = enabled;
+    if (replace && table != null) {
+      _log.info('renderer C stabilises with ${table.length} frames, ${enabled ? 'on' : 'off'}');
+    }
+    return true;
+  }
+
   /// What the plugin drew since the previous call; [probe] asks for five pixels of the next draw (the next call
   /// gives them)
   Future<ProjectionStats?> stats({bool probe = false}) async {
@@ -715,8 +807,14 @@ class PluginRenderer {
         _attached = false;
         final handle = _handleValue;
         if (handle != null) {
+          if (_sentStabilizationEnabled != null) {
+            // The plugin's player may go to another video: the table leaves with this one
+            await _channel.setStabilization(handle, enabled: false, replaceTable: true);
+          }
           await _channel.disable(handle);
         }
+        _sentStabilization = null;
+        _sentStabilizationEnabled = null;
         await _setMpvProperty?.call('keepaspect', 'yes');
       }
       done.complete();

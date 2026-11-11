@@ -147,6 +147,14 @@ uniform vec2 uEnabled;
 // Stream 1 in a texture of its own: 1 with two players, 0 otherwise
 uniform float uSecondTexture;
 uniform sampler2D uSource1;
+// The stabilisation of the frame drawn (stabilization.h, IMMUCH360-NOTE.md,
+// patch 14): 1 when |uCorrection| applies, 0 otherwise (the default of an
+// unset uniform, so a caller that knows nothing of it draws as before).
+// |uCorrection| turns a direction of the stitch's view frame (x right, y
+// down, z forward) into the one the stitch samples: K^T, K the correction of
+// the frame, which shows the point of the stitched sphere at d at K d.
+uniform float uStabilize;
+uniform mat3 uCorrection;
 
 vec3 sampleSecond(vec2 frame) {
   if (uSharp > 0.5 && uTexelsPerPixel < 1.25) {
@@ -337,7 +345,11 @@ vec3 sampleView(vec2 position) {
   return sampleSphere(d);
 #else
   // The stitches take y down: (cos lat sin lon, -sin lat, cos lat cos lon)
-  return stitch(vec3(d.x, -d.y, d.z));
+  vec3 v = vec3(d.x, -d.y, d.z);
+  if (uStabilize > 0.5) {
+    v = uCorrection * v;
+  }
+  return stitch(v);
 #endif
 }
 

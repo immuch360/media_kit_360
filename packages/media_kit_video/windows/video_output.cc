@@ -787,6 +787,9 @@ void VideoOutput::DrawProjection(const ProjectionSetup& setup) {
     const auto size_start = std::chrono::steady_clock::now();
     const auto [video_width, video_height] = VideoParamsSize();
     size_ms = MillisecondsSince(size_start);
+    // Immuch360: the time of the frame mpv is about to hand over, read before
+    // it is drawn (patch 14)
+    const double frame_time = ReadFrameTime();
     const auto mpv_start = std::chrono::steady_clock::now();
     if (projection_renderer_->EnsureFrame(video_width, video_height, setup)) {
       mpv_opengl_fbo fbo{
@@ -801,6 +804,7 @@ void VideoOutput::DrawProjection(const ProjectionSetup& setup) {
       };
       mpv_render_context_render(render_context_, params);
       projection_renderer_->set_has_frame(true);
+      frame_time_ = frame_time;
       drew_frame = true;
     } else if (mpv_frame) {
       // mpv waits for each frame it hands over to be drawn (vo_libmpv's
@@ -818,8 +822,15 @@ void VideoOutput::DrawProjection(const ProjectionSetup& setup) {
     mpv_ms = MillisecondsSince(mpv_start);
   }
   const auto view_start = std::chrono::steady_clock::now();
+  if (!drew_frame) {
+    KnowTimeOfFrameKept();
+  }
+  float correction[9];
+  const bool corrected = CorrectionAt(frame_time_, correction);
   const bool drawn =
-      !drew_flat && projection_renderer_->DrawView(setup, view, width, height);
+      !drew_flat &&
+      projection_renderer_->DrawView(setup, view, width, height, 0,
+                                     corrected ? correction : nullptr);
   // mpv's frame and the view, finished outside the lock: a GPU that idles
   // between the draws of a paused video took 14 to 16 ms to finish each one
   // on the RTX 4060 (2026-10-09), all of it while Flutter's raster thread
@@ -844,6 +855,8 @@ void VideoOutput::DrawProjection(const ProjectionSetup& setup) {
     std::lock_guard<std::mutex> lock(projection_mutex_);
     auto& counters = projection_counters_;
     if (drawn) {
+      counters.stabilized += corrected ? 1 : 0;
+      counters.frame_time = frame_time_;
       if (drew_frame) {
         counters.frames++;
         Keep(counters.frame_ms, total_ms);
@@ -976,6 +989,11 @@ flutter::EncodableMap VideoOutput::SetProjection(
       // it would show a wrong picture, at once and at each view change, until
       // the new file's first frame. The output keeps its last view instead.
       projection_renderer_->set_has_frame(false);
+      // Another file: its frames' times start again (patch 14)
+      frame_clock_.Reset();
+      frame_period_ = 0.0;
+      frame_period_reads_ = 0;
+      frame_time_ = -1.0;
     }
     const auto projection =
         std::make_shared<const ProjectionSetup>(std::move(setup.value()));
@@ -1014,6 +1032,100 @@ void VideoOutput::SetView(const ProjectionView& view) {
     }
   }
   PostRedraw();
+}
+
+void VideoOutput::SetStabilization(
+    bool enabled,
+    std::optional<std::shared_ptr<const stabilization::Table>> table) {
+  {
+    std::lock_guard<std::mutex> lock(projection_mutex_);
+    stabilization_enabled_ = enabled;
+    if (table.has_value()) {
+      stabilization_table_ = std::move(table.value());
+    }
+    // The frame shown, paused or not, drawn again with or without its
+    // correction
+    view_generation_++;
+    if (projection_ == nullptr) {
+      return;
+    }
+  }
+  PostRedraw();
+}
+
+bool VideoOutput::Stabilizing() {
+  std::lock_guard<std::mutex> lock(projection_mutex_);
+  return stabilization_enabled_ && stabilization_table_ != nullptr;
+}
+
+void VideoOutput::KnowTimeOfFrameKept() {
+  if (frame_time_ >= 0.0 || !Stabilizing()) {
+    return;
+  }
+  // The frame kept, drawn before the table came or the switch went on: a
+  // paused video's is the one at time-pos, and a playing video's next frame
+  // comes with its own time anyway
+  double time_pos = -1.0;
+  if (mpv_get_property(handle_, "time-pos", MPV_FORMAT_DOUBLE, &time_pos) >=
+      0) {
+    frame_time_ = time_pos;
+  }
+}
+
+double VideoOutput::ReadFrameTime() {
+  if (!Stabilizing()) {
+    // Nothing to correct: no call into mpv for it, and the clock starts
+    // again when a table comes
+    frame_clock_.Reset();
+    return -1.0;
+  }
+  double time_pos = -1.0;
+  if (mpv_get_property(handle_, "time-pos", MPV_FORMAT_DOUBLE, &time_pos) <
+      0) {
+    return -1.0;
+  }
+  // The file's frame period, once mpv knows it
+  if (frame_period_ <= 0.0 && frame_period_reads_ < 50) {
+    frame_period_reads_++;
+    double fps = 0.0;
+    if (mpv_get_property(handle_, "container-fps", MPV_FORMAT_DOUBLE, &fps) >=
+            0 &&
+        fps > 4.0 && fps < 250.0) {
+      frame_period_ = 1.0 / fps;
+    }
+  }
+  if (frame_period_ <= 0.0) {
+    return time_pos;
+  }
+  mpv_render_frame_info info{0, 0};
+  mpv_render_param param{MPV_RENDER_PARAM_NEXT_FRAME_INFO, &info};
+  if (mpv_render_context_get_info(render_context_, param) < 0) {
+    info.target_time = 0;
+  }
+  const int64_t now = mpv_get_time_us(handle_);
+  double speed = 1.0;
+  if (mpv_get_property(handle_, "speed", MPV_FORMAT_DOUBLE, &speed) < 0) {
+    speed = 1.0;
+  }
+  return frame_clock_.FrameTime(time_pos, info.target_time, now, speed,
+                                frame_period_);
+}
+
+bool VideoOutput::CorrectionAt(double frame_time, float out[9]) {
+  std::shared_ptr<const stabilization::Table> table;
+  {
+    std::lock_guard<std::mutex> lock(projection_mutex_);
+    if (!stabilization_enabled_) {
+      return false;
+    }
+    table = stabilization_table_;
+  }
+  if (table == nullptr || frame_time < 0.0) {
+    return false;
+  }
+  table->SampleMatrixAt(static_cast<int64_t>(std::llround(frame_time * 1e6)),
+                        out);
+  return true;
 }
 
 void VideoOutput::PostRedraw() {
@@ -1083,6 +1195,12 @@ flutter::EncodableMap VideoOutput::ProjectionStats(bool probe) {
     value("partnerOffsetMs",
           flutter::EncodableValue(counters.partner_offset_ms));
     value("partnerSpeed", flutter::EncodableValue(counters.partner_speed));
+    // Immuch360, the stabilisation (patch 14)
+    value("stabilizedFrames", flutter::EncodableValue(counters.stabilized));
+    value("frameTime", flutter::EncodableValue(counters.frame_time));
+    value("stabilizing",
+          flutter::EncodableValue(stabilization_enabled_ &&
+                                  stabilization_table_ != nullptr));
     if (counters.probe_ready) {
       flutter::EncodableList pixels;
       for (const auto pixel : counters.probe) {
@@ -1098,6 +1216,7 @@ flutter::EncodableMap VideoOutput::ProjectionStats(bool probe) {
     counters.alone = 0;
     counters.catch_up = 0;
     counters.partner_frames = 0;
+    counters.stabilized = 0;
     counters.frame_ms.clear();
     counters.redraw_ms.clear();
     counters.locked_ms.clear();
@@ -1276,6 +1395,9 @@ void VideoOutput::NotePending(int64_t now_ns, double period) {
     pts = -1.0;
   }
   pending_.pts = pts;
+  // The stabilisation's time of the frame (patch 14): time-pos corrected by
+  // the frame's target time, whatever the wait above
+  pending_.frame_time = ReadFrameTime();
 }
 
 bool VideoOutput::RenderFrame(const ProjectionSetup& setup) {
@@ -1453,6 +1575,7 @@ void VideoOutput::DrawPaired(const ProjectionSetup& setup) {
   surface_manager_->MakeBackCurrent();
   if (render_mine) {
     RenderFrame(setup);
+    frame_time_ = mine.frame_time;
     note_offset(mine.pts, mine.since_ns, pair_.theirs_pts,
                 pair_.theirs_since_ns, false);
     // The period, from the times of this player's frames, one after the
@@ -1497,12 +1620,18 @@ void VideoOutput::DrawPaired(const ProjectionSetup& setup) {
   }
   const auto view_start = std::chrono::steady_clock::now();
   bool drawn = false;
+  bool corrected = false;
+  float correction[9];
   if (show && projection_renderer_->has_frame()) {
     const GLuint second = partner->projection_renderer_->has_frame()
                               ? partner->projection_renderer_->frame_texture()
                               : 0;
-    drawn =
-        projection_renderer_->DrawView(setup, view, width, height, second);
+    if (!render_mine) {
+      KnowTimeOfFrameKept();
+    }
+    corrected = CorrectionAt(frame_time_, correction);
+    drawn = projection_renderer_->DrawView(setup, view, width, height, second,
+                                           corrected ? correction : nullptr);
   }
   if (drawn || render_mine || render_theirs) {
     glFinish();
@@ -1559,6 +1688,10 @@ void VideoOutput::DrawPaired(const ProjectionSetup& setup) {
     }
     counters.partner_offset_ms = pair_.offset_ms;
     counters.partner_speed = pair_.partner_speed;
+    if (drawn) {
+      counters.stabilized += corrected ? 1 : 0;
+      counters.frame_time = frame_time_;
+    }
     counters.frame_width = projection_renderer_->frame_width();
     counters.frame_height = projection_renderer_->frame_height();
     counters.error = projection_renderer_->error();
