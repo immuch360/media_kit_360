@@ -33,7 +33,7 @@ per library) and its `BUILDINFO.txt` go into `licenses/libmpv/` as well.
 | Switch `IMMUCH360_LIBMPV_FROM_CI` | Archive | Versions |
 |---|---|---|
 | off (the fallback; the default until desktop build 3) | `mpv-dev-x86_64-20241021-git-0f78584.7z`, SHA-256 `e23701df0adc1fe57c8ede3ff313513b0b80519870058c2d35ff02754284a007` (arm64: `mpv-dev-aarch64-20241021-git-0f78584.7z`, `d445d02ab2ee60b1b5988f08ce4d2394cdcc594e98321b746a313313e96133ae`), release `20241021` of `media-kit/libmpv-win32-video-cmake` | mpv v0.39.0-179-g0f78584518, FFmpeg N-117622-g8d940a07d (as the library reports them) |
-| on (the default since desktop build 4; release `libmpv-windows-20261110-1` of `immuch360/libmpv-builds` since media_kit_360 1.0.1, `libmpv-windows-20261009-3` of `freeKC/Immuch360` before) | the archives of a `libmpv-windows-*` release of `immuch360/libmpv-builds` (of `freeKC/Immuch360` until media_kit_360 1.0.0), built by its workflow and pinned by the SHA-256 of that release's `SHA256SUMS.txt` | in that release's `BUILDINFO-x86_64.txt` and `BUILDINFO-aarch64.txt` (mpv `0b7ed670`, FFmpeg `5b9a3ad7` for both releases) |
+| on (the default since desktop build 4; release `libmpv-windows-20261113-2` of `immuch360/libmpv-builds` since media_kit_360 1.1.1, with the TrueHD, MLP and PGS decoders, `libmpv-windows-20261110-1` from 1.0.1, `libmpv-windows-20261009-3` of `freeKC/Immuch360` before) | the archives of a `libmpv-windows-*` release of `immuch360/libmpv-builds` (of `freeKC/Immuch360` until media_kit_360 1.0.0), built by its workflow and pinned by the SHA-256 of that release's `SHA256SUMS.txt` | in that release's `BUILDINFO-x86_64.txt` and `BUILDINFO-aarch64.txt` (mpv `0b7ed670`, FFmpeg `5b9a3ad7` for all three releases) |
 
 ### Licence
 

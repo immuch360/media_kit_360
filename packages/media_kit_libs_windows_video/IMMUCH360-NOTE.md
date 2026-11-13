@@ -40,7 +40,10 @@ What differs from upstream, to apply again when a newer commit is copied here:
   (`IMMUCH360_LIBMPV_FROM_CI=1 win_flutter.sh --env IMMUCH360_LIBMPV_FROM_CI build windows ...`). Since media_kit_360
   1.0.1 (10 November 2026) the recipe lives in github.com/immuch360/libmpv-builds and the pin is its release
   `libmpv-windows-20261110-1` (`IMMUCH360_LIBMPV_RELEASES` points there; mpv `0b7ed670` and FFmpeg `5b9a3ad7` as
-  before, rebuilt by its run 42837177719; x64 `f97a1e31...8da4`, arm64 `69842f61...dcc4`).
+  before, rebuilt by its run 42837177719; x64 `f97a1e31...8da4`, arm64 `69842f61...dcc4`). Since media_kit_360 1.1.1
+  (13 November 2026) the pin is `libmpv-windows-20261113-2` (recipe 1.2.0, run 43429967862): the same commits, with
+  FFmpeg's Dolby TrueHD and MLP decoders, the MLP parser and the PGS subtitle decoder added (x64 `c774ffc6...aeaf`,
+  arm64 `85c95ebb...de1c`).
 - `windows/CMakeLists.txt`: `zlib.dll` of `ANGLE.7z` is no longer bundled. That file is a debug build (it imports
   `VCRUNTIME140D.dll` and `ucrtbased.dll`, absent from a Windows without Visual Studio) and no file of the folder
   imports it or names it; `.github/desktop/windows_bundle.py` refuses a debug runtime, so no ZIP could be made with it.

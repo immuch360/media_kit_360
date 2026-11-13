@@ -44,7 +44,8 @@ endfunction()
 #       github.com/immuch360/libmpv-builds (since media_kit_360 1.0.1; the releases of freeKC/Immuch360 before), with
 #       a recent FFmpeg and its sources published next to it, pinned by the release and the SHA-256 values below
 #       (from the release's SHA256SUMS.txt). It has the filter that stacks the two lenses of a raw video and the
-#       d3d11 interop the 360° renderer uses without copying frames back.
+#       d3d11 interop the 360° renderer uses without copying frames back, and since media_kit_360 1.1.1 the Dolby TrueHD
+#       and MLP decoders and the PGS subtitles of Blu-ray discs.
 #   OFF: media-kit's 2024 archive, the one media_kit_libs_windows_video 1.0.12 downloads (mpv
 #       v0.39.0-179-g0f78584518, FFmpeg N-117622-g8d940a07d), checked by SHA-256. The environment variable of the
 # same name turns it on or off for one build without editing this file (win_flutter.sh --env IMMUCH360_LIBMPV_FROM_CI).
@@ -55,11 +56,11 @@ elseif(NOT DEFINED IMMUCH360_LIBMPV_FROM_CI)
   set(IMMUCH360_LIBMPV_FROM_CI ON)
 endif()
 set(IMMUCH360_LIBMPV_RELEASES "https://github.com/immuch360/libmpv-builds/releases/download")
-set(IMMUCH360_LIBMPV_TAG "libmpv-windows-20261110-1")
-set(IMMUCH360_LIBMPV_X64 "mpv-dev-x86_64-20261110-git-0b7ed67.7z")
-set(IMMUCH360_LIBMPV_X64_SHA256 "f97a1e31c697ad4f4eb15c51d2d451154268c31a39dae1085418debc2e918da4")
-set(IMMUCH360_LIBMPV_ARM64 "mpv-dev-aarch64-20261110-git-0b7ed67.7z")
-set(IMMUCH360_LIBMPV_ARM64_SHA256 "69842f616588923bb1bb631b163b54ab5b0ffc2c2fd5de2aa9bea63202accdc4")
+set(IMMUCH360_LIBMPV_TAG "libmpv-windows-20261113-2")
+set(IMMUCH360_LIBMPV_X64 "mpv-dev-x86_64-20261113-git-0b7ed67.7z")
+set(IMMUCH360_LIBMPV_X64_SHA256 "c774ffc6b8891e3891cfc62550c9553e402881311ee44751f06691e5b869aeaf")
+set(IMMUCH360_LIBMPV_ARM64 "mpv-dev-aarch64-20261113-git-0b7ed67.7z")
+set(IMMUCH360_LIBMPV_ARM64_SHA256 "85c95ebbc67cc1525c25fdf0cfdd2a8e0fb841c90f2f9315e97eaa73b60bde1c")
 
 # Detect architecture and set appropriate libmpv archive
 if(${FLUTTER_TARGET_PLATFORM} STREQUAL "windows-x64")

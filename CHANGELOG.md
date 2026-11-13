@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.1, 13 November 2026
+
+- **libmpv with Dolby TrueHD and PGS subtitles.** media_kit_libs_windows_video now downloads libmpv from the release
+  [`libmpv-windows-20261113-2`](https://github.com/immuch360/libmpv-builds/releases/tag/libmpv-windows-20261113-2) of
+  [immuch360/libmpv-builds](https://github.com/immuch360/libmpv-builds) (recipe 1.2.0), pinned by the SHA-256 of its
+  `SHA256SUMS.txt` (x64 and arm64). Its FFmpeg has the Dolby TrueHD and MLP decoders with the MLP parser, and the
+  PGS subtitle decoder: the earlier build opened a TrueHD track, the default audio of most UHD Blu-ray remuxes, and
+  played it silent ("ad: Failed to initialize a decoder for codec 'truehd'"), and showed no PGS subtitles. All three
+  are LGPL parts of FFmpeg; the DLL stays LGPL-3.0-or-later. Same mpv (`0b7ed670`), FFmpeg (`5b9a3ad7`) and library
+  commits as `libmpv-windows-20261110-1`.
+
 ## 1.1.0, 12 November 2026
 
 - **Stabilisation of raw 360° videos.** Renderer C turns each frame of a raw fisheye or GoPro EAC video by a rotation
