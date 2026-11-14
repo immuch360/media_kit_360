@@ -1,59 +1,47 @@
-// Immuch360: the headset probe (IMMUCH360-NOTE.md, patch 15), the small
-// interface the plugin calls. Compiled only with the MEDIA_KIT_360_XR option
-// of CMake; nothing of it runs, and no OpenXR file is opened, until |Start|.
-//
-// One probe at a time, on a thread of its own: |Start| returns at once, the
-// thread opens the loader and the runtime, waits for a headset and runs the
-// session (xr_controller.h); |Stop| asks the runtime to end it and waits a
-// few seconds for the thread. Every step goes to the log file given to
-// |Start|, which is what FreeKC sends back after a session with a headset.
+// Immuch360: the headset view (IMMUCH360-NOTE.md, patch 15), the small
+// interface the plugin calls, its Windows parts only: the loader's path next
+// to the executable, the log file, the active runtime read from the registry,
+// the real runtime (xr_openxr_runtime.h) and GPU side (xr_angle_gpu.h). What
+// holds a view (one at a time, its thread, the bounded stop, the commands and
+// the polled state) is the portable xr_session_core.h. Compiled only with the
+// MEDIA_KIT_360_XR option of CMake; nothing of it runs, and no OpenXR file is
+// opened, until |Start| (|ActiveRuntime| reads the registry only).
 
 #ifndef XR_SESSION_H_
 #define XR_SESSION_H_
 
-#include <EGL/egl.h>
-
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "projection_renderer.h"
-#include "xr_controller.h"
+#include "xr_runtime_info.h"
+#include "xr_session_core.h"
 
 namespace xr_session {
 
-struct StartOptions {
-  xr_probe::Mode mode = xr_probe::Mode::kPattern;
-  xr_probe::ScreenStereo stereo = xr_probe::ScreenStereo::kMono;
-  double fps = 0.0;
-  double yaw = 0.0;
-  // UTF-8; empty: no log file, the lines go to the standard output only
-  std::string log_path;
-  // A description of what is shown, for the log (the app gives the file's
-  // name or kind, never a URL or a token)
-  std::string label;
-};
+// The frame of the player |handle|, false once it is gone; called from the
+// view's thread, never after |Stop| began
+using FrameSource =
+    std::function<bool(int64_t handle, ProjectionFrameSnapshot*)>;
 
-// The frame of the player shown, false once it is gone (the player
-// disposed); called from the probe's thread
-using FrameSource = std::function<bool(ProjectionFrameSnapshot*)>;
+xr_probe::StartAnswer Start(const xr_probe::StartRequest& request,
+                            FrameSource source);
 
-struct State {
-  bool running = false;
-  xr_probe::Status status;
-  std::string log_path;
-};
-
-// False with |reason| when a probe already runs.
-bool Start(const StartOptions& options, FrameSource source,
-           std::string* reason);
-
-// Ends the probe and waits up to |wait_ms| for its thread; true when it ended.
+// Ends the view and waits up to |wait_ms| for its thread; true when it ended.
 bool Stop(int wait_ms = 4000);
 
-void Recenter();
+void SetContent(const xr_probe::ContentRequest& content);
+void SetContentRate(double fps);
+void SetStrip(std::vector<uint8_t> rgba, uint32_t width, uint32_t height,
+              bool visible);
+void Recenter(bool lying_down);
+xr_probe::PollAnswer Poll(uint64_t after);
 
-State Now();
+// The plugin going away: a bounded stop, then a thread that did not end is
+// detached
+void Teardown(int wait_ms);
 
 }  // namespace xr_session
 

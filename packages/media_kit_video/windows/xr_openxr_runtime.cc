@@ -1,4 +1,4 @@
-// Immuch360: the headset probe's OpenXR runtime (IMMUCH360-NOTE.md, patch
+// Immuch360: the headset view's OpenXR runtime (IMMUCH360-NOTE.md, patch
 // 15); see the header.
 
 #include "xr_openxr_runtime.h"
@@ -62,16 +62,33 @@ XrResult OpenXrRuntime::CreateInstance(const std::vector<std::string>& optional,
     if (loader_ == nullptr) {
       loader_error_ = "openxr_loader.dll could not be loaded (error " +
                       std::to_string(::GetLastError()) + ")";
+      loader_missing_ = true;
       return XR_ERROR_INITIALIZATION_FAILED;
     }
     get_proc_ = reinterpret_cast<PFN_xrGetInstanceProcAddr>(
         ::GetProcAddress(loader_, "xrGetInstanceProcAddr"));
     if (get_proc_ == nullptr) {
       loader_error_ = "openxr_loader.dll has no xrGetInstanceProcAddr";
+      loader_missing_ = true;
       return XR_ERROR_INITIALIZATION_FAILED;
     }
   }
+  loader_missing_ = false;
   instance_ = XR_NULL_HANDLE;
+  // The API layers the loader finds (the implicit ones it enables by itself)
+  info->api_layers.clear();
+  if (Load("xrEnumerateApiLayerProperties", &api_layers_)) {
+    uint32_t layers = 0;
+    if (XR_SUCCEEDED(api_layers_(0, &layers, nullptr)) && layers > 0) {
+      std::vector<XrApiLayerProperties> properties(
+          layers, Typed<XrApiLayerProperties>(XR_TYPE_API_LAYER_PROPERTIES));
+      if (XR_SUCCEEDED(api_layers_(layers, &layers, properties.data()))) {
+        for (uint32_t i = 0; i < layers; i++) {
+          info->api_layers.push_back(properties[i].layerName);
+        }
+      }
+    }
+  }
   if (!Load("xrEnumerateInstanceExtensionProperties", &enumerate_extensions_) ||
       !Load("xrCreateInstance", &create_instance_)) {
     loader_error_ = "the loader's entry points";
@@ -159,6 +176,21 @@ XrResult OpenXrRuntime::CreateInstance(const std::vector<std::string>& optional,
     loader_error_ = "the runtime lacks a core entry point";
     return XR_ERROR_INITIALIZATION_FAILED;
   }
+  // The action system: core OpenXR 1.0, still loaded apart so that a
+  // runtime lacking it runs the view without controllers
+  actions_loaded_ =
+      Load("xrStringToPath", &string_to_path_) &&
+      Load("xrPathToString", &path_to_string_) &&
+      Load("xrCreateActionSet", &create_action_set_) &&
+      Load("xrCreateAction", &create_action_) &&
+      Load("xrSuggestInteractionProfileBindings", &suggest_bindings_) &&
+      Load("xrAttachSessionActionSets", &attach_action_sets_) &&
+      Load("xrSyncActions", &sync_actions_) &&
+      Load("xrGetActionStateBoolean", &action_boolean_) &&
+      Load("xrGetActionStateFloat", &action_float_) &&
+      Load("xrGetActionStateVector2f", &action_vector2_) &&
+      Load("xrApplyHapticFeedback", &apply_haptic_) &&
+      Load("xrGetCurrentInteractionProfile", &current_profile_);
   if (refresh_rate_) {
     refresh_rate_ =
         Load("xrEnumerateDisplayRefreshRatesFB", &refresh_rates_) &&
@@ -360,6 +392,9 @@ bool OpenXrRuntime::PollEvent(Event* event) {
       event->lost = lost->lostEventCount;
       break;
     }
+    case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
+      event->type = Event::Type::kInteractionProfileChanged;
+      break;
     case XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB: {
       const auto* changed =
           reinterpret_cast<const XrEventDataDisplayRefreshRateChangedFB*>(
@@ -503,6 +538,204 @@ XrResult OpenXrRuntime::RequestRefreshRate(float rate) {
   return request_refresh_rate_(session_, rate);
 }
 
+XrAction OpenXrRuntime::ActionOf(uint64_t id) const {
+  const auto found = actions_.find(id);
+  return found == actions_.end() ? XR_NULL_HANDLE : found->second;
+}
+
+XrResult OpenXrRuntime::StringToPath(const std::string& path, XrPath* out) {
+  if (!actions_loaded_ || instance_ == XR_NULL_HANDLE) {
+    return XR_ERROR_HANDLE_INVALID;
+  }
+  return string_to_path_(instance_, path.c_str(), out);
+}
+
+XrResult OpenXrRuntime::CreateActionSet(const std::string& name,
+                                        const std::string& localized,
+                                        uint64_t* id) {
+  if (!actions_loaded_ || instance_ == XR_NULL_HANDLE) {
+    return XR_ERROR_HANDLE_INVALID;
+  }
+  auto create = Typed<XrActionSetCreateInfo>(XR_TYPE_ACTION_SET_CREATE_INFO);
+  CopyName(create.actionSetName, XR_MAX_ACTION_SET_NAME_SIZE, name.c_str());
+  CopyName(create.localizedActionSetName, XR_MAX_LOCALIZED_ACTION_SET_NAME_SIZE,
+           localized.c_str());
+  create.priority = 0;
+  XrActionSet set = XR_NULL_HANDLE;
+  const auto result = create_action_set_(instance_, &create, &set);
+  if (XR_SUCCEEDED(result)) {
+    *id = next_action_++;
+    action_sets_[*id] = set;
+  }
+  return result;
+}
+
+XrResult OpenXrRuntime::CreateAction(uint64_t set, const ActionSpec& spec,
+                                     uint64_t* id) {
+  const auto found = action_sets_.find(set);
+  if (!actions_loaded_ || found == action_sets_.end()) {
+    return XR_ERROR_HANDLE_INVALID;
+  }
+  auto create = Typed<XrActionCreateInfo>(XR_TYPE_ACTION_CREATE_INFO);
+  CopyName(create.actionName, XR_MAX_ACTION_NAME_SIZE, spec.name.c_str());
+  CopyName(create.localizedActionName, XR_MAX_LOCALIZED_ACTION_NAME_SIZE,
+           spec.localized.c_str());
+  switch (spec.type) {
+    case ActionType::kBoolean:
+      create.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+      break;
+    case ActionType::kFloat:
+      create.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
+      break;
+    case ActionType::kVector2:
+      create.actionType = XR_ACTION_TYPE_VECTOR2F_INPUT;
+      break;
+    case ActionType::kVibration:
+      create.actionType = XR_ACTION_TYPE_VIBRATION_OUTPUT;
+      break;
+  }
+  create.countSubactionPaths = static_cast<uint32_t>(spec.subactions.size());
+  create.subactionPaths = spec.subactions.empty() ? nullptr
+                                                  : spec.subactions.data();
+  XrAction action = XR_NULL_HANDLE;
+  const auto result = create_action_(found->second, &create, &action);
+  if (XR_SUCCEEDED(result)) {
+    *id = next_action_++;
+    actions_[*id] = action;
+  }
+  return result;
+}
+
+XrResult OpenXrRuntime::SuggestBindings(
+    XrPath profile, const std::vector<SuggestedBinding>& bindings) {
+  if (!actions_loaded_ || instance_ == XR_NULL_HANDLE) {
+    return XR_ERROR_HANDLE_INVALID;
+  }
+  std::vector<XrActionSuggestedBinding> list;
+  for (const auto& binding : bindings) {
+    list.push_back({ActionOf(binding.action), binding.binding});
+  }
+  auto suggested = Typed<XrInteractionProfileSuggestedBinding>(
+      XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING);
+  suggested.interactionProfile = profile;
+  suggested.countSuggestedBindings = static_cast<uint32_t>(list.size());
+  suggested.suggestedBindings = list.empty() ? nullptr : list.data();
+  return suggest_bindings_(instance_, &suggested);
+}
+
+XrResult OpenXrRuntime::AttachActionSets(uint64_t set) {
+  const auto found = action_sets_.find(set);
+  if (!actions_loaded_ || session_ == XR_NULL_HANDLE ||
+      found == action_sets_.end()) {
+    return XR_ERROR_HANDLE_INVALID;
+  }
+  auto attach =
+      Typed<XrSessionActionSetsAttachInfo>(XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO);
+  attach.countActionSets = 1;
+  attach.actionSets = &found->second;
+  return attach_action_sets_(session_, &attach);
+}
+
+XrResult OpenXrRuntime::SyncActions(uint64_t set) {
+  const auto found = action_sets_.find(set);
+  if (!actions_loaded_ || session_ == XR_NULL_HANDLE ||
+      found == action_sets_.end()) {
+    return XR_ERROR_HANDLE_INVALID;
+  }
+  XrActiveActionSet active{found->second, XR_NULL_PATH};
+  auto sync = Typed<XrActionsSyncInfo>(XR_TYPE_ACTIONS_SYNC_INFO);
+  sync.countActiveActionSets = 1;
+  sync.activeActionSets = &active;
+  return sync_actions_(session_, &sync);
+}
+
+XrResult OpenXrRuntime::GetBoolean(uint64_t action, XrPath hand,
+                                   BoolState* out) {
+  if (!actions_loaded_ || session_ == XR_NULL_HANDLE) {
+    return XR_ERROR_HANDLE_INVALID;
+  }
+  auto get = Typed<XrActionStateGetInfo>(XR_TYPE_ACTION_STATE_GET_INFO);
+  get.action = ActionOf(action);
+  get.subactionPath = hand;
+  auto state = Typed<XrActionStateBoolean>(XR_TYPE_ACTION_STATE_BOOLEAN);
+  const auto result = action_boolean_(session_, &get, &state);
+  out->value = state.currentState == XR_TRUE;
+  out->active = state.isActive == XR_TRUE;
+  return result;
+}
+
+XrResult OpenXrRuntime::GetFloat(uint64_t action, XrPath hand,
+                                 FloatState* out) {
+  if (!actions_loaded_ || session_ == XR_NULL_HANDLE) {
+    return XR_ERROR_HANDLE_INVALID;
+  }
+  auto get = Typed<XrActionStateGetInfo>(XR_TYPE_ACTION_STATE_GET_INFO);
+  get.action = ActionOf(action);
+  get.subactionPath = hand;
+  auto state = Typed<XrActionStateFloat>(XR_TYPE_ACTION_STATE_FLOAT);
+  const auto result = action_float_(session_, &get, &state);
+  out->value = state.currentState;
+  out->active = state.isActive == XR_TRUE;
+  return result;
+}
+
+XrResult OpenXrRuntime::GetVector2(uint64_t action, XrPath hand,
+                                   Vector2State* out) {
+  if (!actions_loaded_ || session_ == XR_NULL_HANDLE) {
+    return XR_ERROR_HANDLE_INVALID;
+  }
+  auto get = Typed<XrActionStateGetInfo>(XR_TYPE_ACTION_STATE_GET_INFO);
+  get.action = ActionOf(action);
+  get.subactionPath = hand;
+  auto state = Typed<XrActionStateVector2f>(XR_TYPE_ACTION_STATE_VECTOR2F);
+  const auto result = action_vector2_(session_, &get, &state);
+  out->x = state.currentState.x;
+  out->y = state.currentState.y;
+  out->active = state.isActive == XR_TRUE;
+  return result;
+}
+
+XrResult OpenXrRuntime::ApplyHaptic(uint64_t action, XrPath hand,
+                                    float amplitude, XrDuration duration) {
+  if (!actions_loaded_ || session_ == XR_NULL_HANDLE) {
+    return XR_ERROR_HANDLE_INVALID;
+  }
+  auto info = Typed<XrHapticActionInfo>(XR_TYPE_HAPTIC_ACTION_INFO);
+  info.action = ActionOf(action);
+  info.subactionPath = hand;
+  auto vibration = Typed<XrHapticVibration>(XR_TYPE_HAPTIC_VIBRATION);
+  vibration.duration = duration;
+  vibration.frequency = XR_FREQUENCY_UNSPECIFIED;
+  vibration.amplitude = amplitude;
+  return apply_haptic_(
+      session_, &info,
+      reinterpret_cast<const XrHapticBaseHeader*>(&vibration));
+}
+
+XrResult OpenXrRuntime::CurrentProfile(XrPath hand, std::string* profile) {
+  if (!actions_loaded_ || session_ == XR_NULL_HANDLE) {
+    return XR_ERROR_HANDLE_INVALID;
+  }
+  auto state =
+      Typed<XrInteractionProfileState>(XR_TYPE_INTERACTION_PROFILE_STATE);
+  auto result = current_profile_(session_, hand, &state);
+  if (!XR_SUCCEEDED(result)) {
+    return result;
+  }
+  profile->clear();
+  if (state.interactionProfile == XR_NULL_PATH) {
+    return XR_SUCCESS;
+  }
+  char text[XR_MAX_PATH_LENGTH] = {0};
+  uint32_t count = 0;
+  result = path_to_string_(instance_, state.interactionProfile,
+                           XR_MAX_PATH_LENGTH, &count, text);
+  if (XR_SUCCEEDED(result)) {
+    *profile = text;
+  }
+  return result;
+}
+
 void OpenXrRuntime::DestroySession() {
   for (auto& [id, swapchain] : swapchains_) {
     destroy_swapchain_(swapchain);
@@ -519,6 +752,9 @@ void OpenXrRuntime::DestroySession() {
 }
 
 void OpenXrRuntime::DestroyInstance() {
+  // The action sets and actions go with the instance
+  actions_.clear();
+  action_sets_.clear();
   if (instance_ != XR_NULL_HANDLE) {
     destroy_instance_(instance_);
     instance_ = XR_NULL_HANDLE;

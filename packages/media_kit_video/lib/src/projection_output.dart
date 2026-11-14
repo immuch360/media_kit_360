@@ -12,13 +12,24 @@ import 'package:flutter/services.dart';
 /// What the frame of the video holds
 enum ProjectionKind {
   /// An equirectangular frame: mono, or stereo with one eye shown, over the whole sphere or its front half
-  equirect,
+  equirect(0),
 
   /// The two fisheye lenses of a raw 360 camera, side by side in the frame
-  fisheyePair,
+  fisheyePair(1),
 
   /// The two EAC tracks of a GoPro .360, side by side in the frame
-  eacPair,
+  eacPair(2),
+
+  /// A flat film drawn as it is, letterboxed into the output (IMMUCH360-NOTE.md, patch 15): the window keeps its
+  /// normal picture while the headset view reads the player's frame. A stereo film shows one eye
+  /// ([ProjectionSetup.eye]) at the shape it is seen with ([ProjectionSetup.aspect]). Code 3 is the plugin's test
+  /// pattern, never asked from Dart.
+  flat(4);
+
+  const ProjectionKind(this.code);
+
+  /// The number the plugin knows the kind by (PROJECTION_KIND of the passes)
+  final int code;
 }
 
 /// How the plugin draws a player: the projection, its tier and the output size
@@ -38,6 +49,7 @@ class ProjectionSetup {
     required this.maxOutputHeight,
     this.partnerStream = false,
     this.secondary = false,
+    this.aspect = 0,
   });
 
   final ProjectionKind kind;
@@ -78,10 +90,14 @@ class ProjectionSetup {
   /// nothing
   final bool secondary;
 
+  /// [ProjectionKind.flat]: the shape of the picture of [eye] as seen, width / height (16 / 9 for a half side by side
+  /// 16:9 film, whose eye is squeezed in the frame); 0 for the shape it has in the frame
+  final double aspect;
+
   Map<String, Object?> toArguments(int handle) => {
         'handle': handle,
         'enabled': true,
-        'kind': kind.index,
+        'kind': kind.code,
         'eye': Float64List.fromList(eye),
         'crop': Float64List.fromList(crop),
         'tracks': tracks,
@@ -97,6 +113,7 @@ class ProjectionSetup {
         'maxOutputHeight': maxOutputHeight,
         'partnerStream': partnerStream,
         'secondary': secondary,
+        'aspect': aspect,
       };
 }
 

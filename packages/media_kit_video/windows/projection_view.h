@@ -186,6 +186,109 @@ inline void EyeView(Quaternion orientation, double angle_left,
   view->eye = true;
 }
 
+// Immuch360, the headset view's recentering (patch 15): quaternions of
+// OpenXR's spaces (x right, y up, z behind).
+
+// a then b applied to a vector is Multiply(a, b): b first, then a
+inline Quaternion Multiply(Quaternion a, Quaternion b) {
+  return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+          a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+          a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+          a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
+}
+
+inline Quaternion Conjugate(Quaternion q) { return {-q.x, -q.y, -q.z, q.w}; }
+
+inline Quaternion Normalized(Quaternion q) {
+  const double n = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+  if (n < 1e-9) return {};
+  return {q.x / n, q.y / n, q.z / n, q.w / n};
+}
+
+// The turn of |radians| about the unit axis (x, y, z), right handed
+inline Quaternion AxisAngle(double x, double y, double z, double radians) {
+  const double s = std::sin(radians / 2.0);
+  return {x * s, y * s, z * s, std::cos(radians / 2.0)};
+}
+
+inline void Rotate(Quaternion q, const double v[3], double out[3]) {
+  double r[9];
+  QuaternionRows(q, r);
+  for (int i = 0; i < 3; i++) {
+    out[i] = r[i * 3] * v[0] + r[i * 3 + 1] * v[1] + r[i * 3 + 2] * v[2];
+  }
+}
+
+// What the headset view keeps ahead: the head's direction when it was
+// recentered. Upright, its yaw only (the head may then look up or down and
+// the horizon stays level); lying down, its yaw and its pitch (a head on a
+// pillow looking at the ceiling has the video's centre there), never the
+// roll. |rotation| is the anchor's frame in the LOCAL space: Ry(-yaw) Rx(pitch)
+// (yaw positive to the right, pitch positive up, degrees).
+struct Anchor {
+  double yaw = 0.0;
+  double pitch = 0.0;
+  Quaternion rotation;
+};
+
+inline Anchor AnchorAt(double yaw_degrees, double pitch_degrees) {
+  Anchor anchor;
+  anchor.yaw = yaw_degrees;
+  anchor.pitch = std::clamp(pitch_degrees, -90.0, 90.0);
+  anchor.rotation =
+      Multiply(AxisAngle(0, 1, 0, -anchor.yaw * kDegree),
+               AxisAngle(1, 0, 0, anchor.pitch * kDegree));
+  return anchor;
+}
+
+// The anchor of a head of |orientation| (the eyes' orientation in the LOCAL
+// space). The yaw comes from the head's forward and up together (cos p f -
+// sin p u is level and points where the head would look sitting up), so a
+// head looking straight up or down still has one.
+inline Anchor AnchorOf(Quaternion orientation, bool lying_down) {
+  double r[9];
+  QuaternionRows(orientation, r);
+  const double forward[3] = {-r[2], -r[5], -r[8]};
+  const double up[3] = {r[1], r[4], r[7]};
+  const double sin_pitch = std::clamp(forward[1], -1.0, 1.0);
+  const double cos_pitch = std::sqrt((std::max)(0.0, 1.0 - sin_pitch * sin_pitch));
+  const double level_x = cos_pitch * forward[0] - sin_pitch * up[0];
+  const double level_z = cos_pitch * forward[2] - sin_pitch * up[2];
+  double yaw = 0.0;
+  if (std::abs(level_x) > 1e-9 || std::abs(level_z) > 1e-9) {
+    // Forward is -z, right is +x
+    yaw = std::atan2(level_x, -level_z) / kDegree;
+  }
+  const double pitch = lying_down ? std::asin(sin_pitch) / kDegree : 0.0;
+  return AnchorAt(yaw, pitch);
+}
+
+// The view of an eye of |orientation| from the anchor: the sphere's centre
+// (turned by the window's yaw) where the anchor looks. Upright it is the
+// probe's EyeView with the offset window yaw - head yaw.
+inline void AnchoredEyeView(Quaternion orientation, double angle_left,
+                            double angle_right, double angle_up,
+                            double angle_down, const Anchor& anchor,
+                            double window_yaw_degrees, ProjectionView* view) {
+  EyeView(Multiply(Conjugate(anchor.rotation), orientation), angle_left,
+          angle_right, angle_up, angle_down, window_yaw_degrees, view);
+}
+
+// A pose |distance| metres ahead of |centre| along the anchor's forward
+// turned down by |down_degrees|, facing back at |centre| (a quad's front is
+// its +z).
+inline void PoseAhead(const Anchor& anchor, const double centre[3],
+                      double distance, double down_degrees, double position[3],
+                      Quaternion* orientation) {
+  const auto turned = Multiply(anchor.rotation,
+                               AxisAngle(1, 0, 0, -down_degrees * kDegree));
+  const double ahead[3] = {0.0, 0.0, -distance};
+  double offset[3];
+  Rotate(turned, ahead, offset);
+  for (int i = 0; i < 3; i++) position[i] = centre[i] + offset[i];
+  *orientation = turned;
+}
+
 }  // namespace projection_view
 
 #endif  // PROJECTION_VIEW_H_

@@ -1,5 +1,23 @@
 # Changelog
 
+## Next (branch `xr-v1`, to be tagged 1.2.0 after the first headset session)
+
+- **Headset view, experimental, not yet tried in a headset by the project.** In a Windows build with the
+  `MEDIA_KIT_360_XR` option of CMake, media_kit_video shows a player in a PC VR headset through OpenXR (SteamVR, Meta
+  Horizon Link, Virtual Desktop, Pico Connect): a 360 or 180 video around the head, a flat 2D or 3D film on a screen,
+  a test pattern, or a dark room with a status strip the app draws. `lib/xr.dart` (`XrHeadset`): the active runtime
+  read from the registry without loading anything, start, the next video or mode with no new session, the strip,
+  recentering upright or lying down, a polled state with the controllers' events (play or pause, seek, recenter,
+  lying down, leave) and stop codes. Controllers through OpenXR's action system with bindings for the simple, Touch,
+  Index, Vive, Microsoft, HP and Pico controllers. Replaces the probe's `XrProbe`. Without the option nothing of it
+  is built and every call answers `notInBuild`.
+- **Kind 4, the flat pass, in every build.** `ProjectionKind.flat` and `PluginProjection.flat` draw a flat film
+  letterboxed (a stereo film's left eye at its seen shape), so a flat player can keep its normal picture while its
+  frame goes to the headset. `ProjectionKind` now carries the plugin's numbers (`code`).
+- **Tests:** the headset view's portable C++ tests with ASan and UBSan in the analyze job and with MSVC in the
+  `windows-xr` job, the Windows tests on the runner (registry, loader, action calls, WARP refused, strip bytes), the
+  flat pass in ANGLE, the Dart calls.
+
 ## 1.1.1, 13 November 2026
 
 - **libmpv with Dolby TrueHD and PGS subtitles.** media_kit_libs_windows_video now downloads libmpv from the release

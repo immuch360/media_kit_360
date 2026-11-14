@@ -198,7 +198,7 @@ GLuint ProjectionRenderer::Compile(GLenum type, const std::string& source) {
 }
 
 GLuint ProjectionRenderer::Program(int32_t kind) {
-  if (kind < 0 || kind > 3) {
+  if (kind < 0 || kind > 4) {
     error_ = "unknown projection " + std::to_string(kind);
     return 0;
   }
@@ -220,6 +220,8 @@ GLuint ProjectionRenderer::Program(int32_t kind) {
     source += projection_shaders::kFragmentEquirect;
   } else if (kind == 3) {
     source += projection_shaders::kFragmentPattern;
+  } else if (kind == 4) {
+    source += projection_shaders::kFragmentFlat;
   } else {
     source += projection_shaders::kFragmentStreams;
     source += kind == 1 ? projection_shaders::kFragmentFisheye
@@ -292,6 +294,25 @@ void ProjectionRenderer::SetUniforms(GLuint program,
   }
   if (setup.kind == 3) {
     glUniform2f(location("uPattern"), pattern.eye, pattern.time);
+    return;
+  }
+  if (setup.kind == 4) {
+    // The picture's shape, and the texels of the frame per pixel of the
+    // output where it is drawn (the filter's choice)
+    const double eye_width = frame.width * static_cast<double>(setup.eye[2]);
+    const double eye_height = frame.height * static_cast<double>(setup.eye[3]);
+    const double aspect =
+        setup.aspect > 0.0f
+            ? static_cast<double>(setup.aspect)
+            : eye_width / std::max(1.0, eye_height);
+    const double output_aspect =
+        static_cast<double>(width) / std::max(1, height);
+    const double drawn_width =
+        aspect > output_aspect ? width : height * aspect;
+    glUniform4fv(location("uEye"), 1, setup.eye);
+    glUniform1f(location("uAspect"), static_cast<GLfloat>(aspect));
+    glUniform1f(location("uTexelsPerPixel"),
+                static_cast<GLfloat>(eye_width / std::max(1.0, drawn_width)));
     return;
   }
   glUniform1f(location("uTracks"),

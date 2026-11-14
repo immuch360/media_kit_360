@@ -1,21 +1,214 @@
-// Immuch360: the headset probe (IMMUCH360-NOTE.md, patch 15), the choices it
+// Immuch360: the headset view (IMMUCH360-NOTE.md, patch 15), the choices it
 // makes that need neither a headset nor Windows: whether the runtime's
-// graphics card is the plugin's, the swapchain format, the refresh rate, and
-// the states of an OpenXR session. Only the core openxr.h (vendored, Apache
-// 2.0 OR MIT) is included, so the CI tests all of it with any C++17 compiler
-// (test/xr_probe_test.cc).
+// graphics card is the plugin's, the swapchain format, the refresh rate, the
+// states of an OpenXR session, what is shown (the content), the codes a view
+// stops with, the layout of a flat screen and the guess of a runtime from its
+// manifest. Only the core openxr.h (vendored, Apache 2.0 OR MIT) is included,
+// so the CI tests all of it with any C++17 compiler (test/xr_probe_test.cc,
+// test/xr_v1_test.cc). The namespace keeps the probe's name.
 
 #ifndef XR_PROBE_CORE_H_
 #define XR_PROBE_CORE_H_
 
 #include <openxr/openxr.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 namespace xr_probe {
+
+// What the headset shows
+enum class Mode {
+  // A 360 or 180 video (any layout of renderer C) around the head
+  kSphere,
+  // The frame as a flat screen ahead, 2D or 3D (quad layers, one per eye)
+  kScreen,
+  // The test pattern of renderer C (kind 3): grey ramp, one patch per eye,
+  // a bar moving at the content's rate
+  kPattern,
+  // No player: a dark grey room, and the strip when the app gives one
+  kIdle,
+};
+
+// How a frame holds its two eyes
+enum class Stereo { kMono, kLeftRight, kTopBottom };
+// The probe's name of it
+using ScreenStereo = Stereo;
+
+// A flat 3D film's eyes: full (each eye has the picture's shape: 32:9 side by
+// side for a 16:9 film) or half (each eye squeezed to half the frame, shown
+// as the whole frame's shape). Mono ignores it.
+enum class Squeeze { kFull, kHalf };
+
+// What the app shows, as it gives it (XrContent in Dart)
+struct ContentRequest {
+  // The player (Player.handle) whose frame is shown; 0 for none
+  int64_t handle = 0;
+  Mode mode = Mode::kIdle;
+  Stereo stereo = Stereo::kMono;
+  Squeeze squeeze = Squeeze::kFull;
+  // The content's frame rate, 0 when unknown
+  double fps = 0.0;
+  // The window's yaw: what was ahead in the window is ahead in the headset
+  double yaw = 0.0;
+  // The kind of video, for the log (never a URL, a path or a title)
+  std::string label;
+};
+
+inline const char* ModeName(Mode mode) {
+  switch (mode) {
+    case Mode::kSphere:
+      return "sphere";
+    case Mode::kScreen:
+      return "screen";
+    case Mode::kPattern:
+      return "pattern";
+    case Mode::kIdle:
+      return "idle";
+  }
+  return "?";
+}
+
+inline const char* StereoName(Stereo stereo) {
+  switch (stereo) {
+    case Stereo::kMono:
+      return "mono";
+    case Stereo::kLeftRight:
+      return "leftRight";
+    case Stereo::kTopBottom:
+      return "topBottom";
+  }
+  return "?";
+}
+
+inline const char* SqueezeName(Squeeze squeeze) {
+  return squeeze == Squeeze::kHalf ? "half" : "full";
+}
+
+inline Mode ModeOf(const std::string& name) {
+  if (name == "sphere") return Mode::kSphere;
+  if (name == "screen") return Mode::kScreen;
+  if (name == "pattern") return Mode::kPattern;
+  return Mode::kIdle;
+}
+
+inline Stereo StereoOf(const std::string& name) {
+  if (name == "leftRight") return Stereo::kLeftRight;
+  if (name == "topBottom") return Stereo::kTopBottom;
+  return Stereo::kMono;
+}
+
+inline Squeeze SqueezeOf(const std::string& name) {
+  return name == "half" ? Squeeze::kHalf : Squeeze::kFull;
+}
+
+// Why a view ended, or why it did not start: the codes of XrStopReason in
+// Dart, each with an English detail in the log and the state
+enum class StopReason {
+  kNone,
+  // The app asked (stop, or the plugin going away)
+  kStoppedByApp,
+  // The runtime ended the session without the app asking (its dashboard, the
+  // headset's menu)
+  kEndedFromHeadset,
+  // No OpenXR runtime installed or active (XR_ERROR_RUNTIME_UNAVAILABLE,
+  // XR_ERROR_RUNTIME_FAILURE at xrCreateInstance)
+  kNoRuntime,
+  // openxr_loader.dll could not be loaded
+  kLoaderMissing,
+  // The runtime had no headset within the wait
+  kNoHeadset,
+  // The headset is on another graphics card than the plugin's
+  kOtherGpu,
+  // The plugin's device is under the runtime's feature level, or is
+  // Microsoft's Basic Render Driver (no graphics driver)
+  kGpuTooWeak,
+  // The instance or the session was lost (the runtime stopped or updated)
+  kRuntimeLost,
+  // A stop did not end the view in time: the runtime hangs in a call
+  kRuntimeNotAnswering,
+  // A view already runs
+  kAlreadyRunning,
+  // The plugin was built without MEDIA_KIT_360_XR
+  kNotInBuild,
+  // Not Windows
+  kNotWindows,
+  // Anything else, the call and its result in the detail
+  kFailed,
+};
+
+inline const char* StopReasonCode(StopReason reason) {
+  switch (reason) {
+    case StopReason::kNone:
+      return "none";
+    case StopReason::kStoppedByApp:
+      return "stoppedByApp";
+    case StopReason::kEndedFromHeadset:
+      return "endedFromHeadset";
+    case StopReason::kNoRuntime:
+      return "noRuntime";
+    case StopReason::kLoaderMissing:
+      return "loaderMissing";
+    case StopReason::kNoHeadset:
+      return "noHeadset";
+    case StopReason::kOtherGpu:
+      return "otherGpu";
+    case StopReason::kGpuTooWeak:
+      return "gpuTooWeak";
+    case StopReason::kRuntimeLost:
+      return "runtimeLost";
+    case StopReason::kRuntimeNotAnswering:
+      return "runtimeNotAnswering";
+    case StopReason::kAlreadyRunning:
+      return "alreadyRunning";
+    case StopReason::kNotInBuild:
+      return "notInBuild";
+    case StopReason::kNotWindows:
+      return "notWindows";
+    case StopReason::kFailed:
+      return "failed";
+  }
+  return "failed";
+}
+
+// A result that means the runtime is gone
+inline bool IsLoss(XrResult result) {
+  return result == XR_ERROR_INSTANCE_LOST || result == XR_ERROR_SESSION_LOST;
+}
+
+// The code of a failed xrCreateInstance (or of the loader before it)
+inline StopReason ReasonOfInstanceFailure(XrResult result,
+                                          bool loader_missing) {
+  if (loader_missing) {
+    return StopReason::kLoaderMissing;
+  }
+  if (result == XR_ERROR_RUNTIME_UNAVAILABLE ||
+      result == XR_ERROR_RUNTIME_FAILURE) {
+    return StopReason::kNoRuntime;
+  }
+  if (IsLoss(result)) {
+    return StopReason::kRuntimeLost;
+  }
+  return StopReason::kFailed;
+}
+
+// The code of any other failed call
+inline StopReason ReasonOfCallFailure(XrResult result) {
+  return IsLoss(result) ? StopReason::kRuntimeLost : StopReason::kFailed;
+}
+
+// Microsoft's Basic Render Driver (WARP): what Windows gives with no graphics
+// driver, and GitHub's runners. It draws, slowly, on the processor: never a
+// headset.
+constexpr uint32_t kBasicRenderVendor = 0x1414;
+constexpr uint32_t kBasicRenderDevice = 0x8c;
+
+inline bool IsBasicRenderDriver(uint32_t vendor, uint32_t device) {
+  return vendor == kBasicRenderVendor && device == kBasicRenderDevice;
+}
 
 // A graphics adapter as Windows names it (LUID: LowPart, HighPart), and the
 // Direct3D feature level of a device (D3D_FEATURE_LEVEL values: 0xb000 for
@@ -217,6 +410,115 @@ class SessionStateMachine {
   XrSessionState state_ = XR_SESSION_STATE_UNKNOWN;
   bool running_ = false;
 };
+
+// The layout of a flat film on its screen: one quad (mono) or one per eye,
+// the part of the frame each eye shows, and the shape of what an eye sees
+// (width / height), from the frame's size and the eyes' squeeze as the app
+// gives them (no guess from the frame's shape).
+struct ScreenLayout {
+  int quads = 1;
+  XrRect2Di rects[2]{};
+  double eye_aspect = 1.0;
+};
+
+inline ScreenLayout LayoutScreen(uint32_t width, uint32_t height, Stereo stereo,
+                                 Squeeze squeeze) {
+  ScreenLayout layout;
+  const auto w = static_cast<int32_t>(width);
+  const auto h = static_cast<int32_t>(height);
+  const double aspect =
+      static_cast<double>(width) / static_cast<double>((std::max)(1u, height));
+  layout.rects[0] = {{0, 0}, {w, h}};
+  layout.rects[1] = layout.rects[0];
+  layout.eye_aspect = aspect;
+  if (stereo == Stereo::kLeftRight) {
+    layout.quads = 2;
+    layout.rects[0] = {{0, 0}, {w / 2, h}};
+    layout.rects[1] = {{w / 2, 0}, {w / 2, h}};
+    layout.eye_aspect = squeeze == Squeeze::kFull ? aspect / 2.0 : aspect;
+  } else if (stereo == Stereo::kTopBottom) {
+    layout.quads = 2;
+    layout.rects[0] = {{0, 0}, {w, h / 2}};
+    layout.rects[1] = {{0, h / 2}, {w, h / 2}};
+    layout.eye_aspect = squeeze == Squeeze::kFull ? aspect * 2.0 : aspect;
+  }
+  return layout;
+}
+
+// Whether the session shows the app's frames to the user (VISIBLE or
+// FOCUSED), watched over time: off once it has not for more than |delay|
+// seconds (the headset taken off, a dashboard over the app), on again when it
+// shows again after an off. +1 on, -1 off, 0 nothing to tell.
+class VisibilityWatch {
+ public:
+  explicit VisibilityWatch(double delay = 2.0) : delay_(delay) {}
+
+  int Update(double now, bool visible) {
+    if (visible) {
+      seen_ = true;
+      hidden_since_ = -1.0;
+      if (reported_off_) {
+        reported_off_ = false;
+        return 1;
+      }
+      return 0;
+    }
+    // Not yet shown since the start: nothing was visible to leave
+    if (!seen_ || reported_off_) {
+      return 0;
+    }
+    if (hidden_since_ < 0.0) {
+      hidden_since_ = now;
+    }
+    if (now - hidden_since_ > delay_) {
+      reported_off_ = true;
+      return -1;
+    }
+    return 0;
+  }
+
+ private:
+  double delay_;
+  bool seen_ = false;
+  bool reported_off_ = false;
+  double hidden_since_ = -1.0;
+};
+
+// The file name of a path, either separator
+inline std::string FileNameOf(const std::string& path) {
+  const auto slash = path.find_last_of("\\/");
+  return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+// The runtime a manifest belongs to, guessed from its path (folders and file
+// name, case ignored): what the app shows before any DLL is loaded. "" when
+// it is not one the app knows ("an OpenXR runtime").
+inline std::string GuessRuntime(const std::string& manifest_path) {
+  std::string path = manifest_path;
+  std::transform(path.begin(), path.end(), path.begin(), [](char c) {
+    return static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+  });
+  const auto has = [&path](const char* part) {
+    return path.find(part) != std::string::npos;
+  };
+  if (has("steamxr") || has("steamvr")) return "SteamVR";
+  if (has("oculus") || has("meta horizon") || has("meta-horizon")) {
+    return "Meta Horizon Link";
+  }
+  if (has("virtualdesktop") || has("virtual desktop")) {
+    return "Virtual Desktop";
+  }
+  if (has("pico")) return "Pico Connect";
+  if (has("mixedrealityruntime") || has("mixed reality")) {
+    return "Windows Mixed Reality";
+  }
+  if (has("varjo")) return "Varjo";
+  if (has("vive") || has("htc")) return "VIVE";
+  if (has("pimax")) return "Pimax";
+  if (has("monado")) return "Monado";
+  if (has("wivrn")) return "WiVRn";
+  return "";
+}
 
 }  // namespace xr_probe
 

@@ -3,7 +3,11 @@
 // by the analyze job of the CI, and by MSVC in the xr job.
 //
 //   g++ -std=c++17 -Wall -Wextra -I.. -I../third_party/openxr/include
-//     xr_probe_test.cc ../xr_controller.cc -o test && ./test
+//     xr_probe_test.cc ../xr_controller.cc ../xr_input.cc
+//     ../xr_session_core.cc -o test && ./test
+//
+// Kept as the probe had them, on version 1's interfaces (the fakes are in
+// xr_fakes.h; version 1's own tests in xr_v1_test.cc).
 //
 // What they pin:
 // - the view of an eye (projection_view.h): an eye looking ahead with a
@@ -29,26 +33,16 @@
 #include "../projection_view.h"
 #include "../xr_controller.h"
 #include "../xr_probe_core.h"
+#include "xr_fakes.h"
 
 namespace {
 
-int failures = 0;
-int checks = 0;
-
-void Check(bool ok, const std::string& what) {
-  checks++;
-  if (!ok) {
-    failures++;
-    std::printf("FAILED: %s\n", what.c_str());
-  }
-}
-
-void Near(double expected, double actual, double tolerance,
-          const std::string& what) {
-  Check(std::abs(expected - actual) <= tolerance,
-        what + ": expected " + std::to_string(expected) + ", got " +
-            std::to_string(actual));
-}
+using fakes::Check;
+using fakes::FakeGpu;
+using fakes::FakeRuntime;
+using fakes::Logged;
+using fakes::Near;
+using fakes::State;
 
 using projection_view::kDegree;
 using projection_view::Quaternion;
@@ -242,241 +236,10 @@ void TestChoices() {
   Check(machine.On(XR_SESSION_STATE_EXITING) == SessionAction::kExit, "exiting");
 }
 
-xr_probe::Event State(XrSessionState state) {
-  xr_probe::Event event;
-  event.type = xr_probe::Event::Type::kSessionState;
-  event.state = state;
-  return event;
-}
-
-// A runtime that plays a script: one list of events per call of PollEvent
-// rounds, the frames' results, and every call written down
-class FakeRuntime : public xr_probe::Runtime {
- public:
-  XrResult create_result = XR_SUCCESS;
-  int unavailable_systems = 0;
-  xr_probe::AdapterId adapter{42, 0};
-  std::vector<int64_t> formats = {xr_probe::kDxgiR8G8B8A8UnormSrgb};
-  // Per frame: the events polled before it
-  std::deque<std::vector<xr_probe::Event>> script;
-  // Per frame index: what xrWaitFrame returns (XR_SUCCESS by default)
-  std::vector<std::pair<int, XrResult>> wait_results;
-  bool render = true;
-  std::vector<std::string> calls;
-  int frames = 0;
-  int polls_without_events = 0;
-  std::vector<float> rates = {72, 90, 120};
-  float rate = 90;
-  bool has_rates = true;
-  uint64_t next_swapchain = 1;
-  bool exit_on_request = true;
-  bool exit_requested = false;
-  int layers_with_projection = 0;
-  int quad_layers = 0;
-
-  XrResult CreateInstance(const std::vector<std::string>& optional,
-                          xr_probe::RuntimeInfo* info) override {
-    calls.push_back("CreateInstance");
-    info->name = "Fake runtime";
-    info->version = XR_MAKE_VERSION(1, 0, 1);
-    info->offered = {"XR_KHR_D3D11_enable", "XR_FB_display_refresh_rate"};
-    info->enabled = {"XR_KHR_D3D11_enable"};
-    for (const auto& name : optional) info->enabled.push_back(name);
-    return create_result;
-  }
-  XrResult GetSystem(xr_probe::SystemInfo* info) override {
-    calls.push_back("GetSystem");
-    if (unavailable_systems > 0) {
-      unavailable_systems--;
-      return XR_ERROR_FORM_FACTOR_UNAVAILABLE;
-    }
-    info->name = "Fake headset";
-    info->eye_width[0] = info->eye_width[1] = 64;
-    info->eye_height[0] = info->eye_height[1] = 64;
-    info->max_swapchain_width = info->max_swapchain_height = 4096;
-    info->adapter = adapter;
-    info->min_feature_level = 0xb000;
-    return XR_SUCCESS;
-  }
-  XrResult CreateSession(void*) override {
-    calls.push_back("CreateSession");
-    return XR_SUCCESS;
-  }
-  XrResult SwapchainFormats(std::vector<int64_t>* out) override {
-    *out = formats;
-    return XR_SUCCESS;
-  }
-  XrResult CreateSwapchain(int64_t format, uint32_t width, uint32_t height,
-                           xr_probe::Swapchain* out) override {
-    calls.push_back("CreateSwapchain");
-    out->id = next_swapchain++;
-    out->format = format;
-    out->width = width;
-    out->height = height;
-    out->images = {nullptr, nullptr, nullptr};
-    return XR_SUCCESS;
-  }
-  void DestroySwapchain(uint64_t) override { calls.push_back("DestroySwapchain"); }
-  // One round of polls (until it returns false) takes the next entry of the
-  // script; once the script is over, EXITING after a while, as a runtime that
-  // closes
-  bool PollEvent(xr_probe::Event* event) override {
-    if (!round_open) {
-      round_open = true;
-      if (!script.empty()) {
-        pending.assign(script.front().begin(), script.front().end());
-        script.pop_front();
-      } else if (++polls_without_events > 300) {
-        polls_without_events = 0;
-        pending.push_back(State(XR_SESSION_STATE_EXITING));
-      }
-    }
-    if (pending.empty()) {
-      round_open = false;
-      return false;
-    }
-    *event = pending.front();
-    pending.pop_front();
-    return true;
-  }
-  XrResult BeginSession() override {
-    calls.push_back("BeginSession");
-    return XR_SUCCESS;
-  }
-  XrResult EndSession() override {
-    calls.push_back("EndSession");
-    return XR_SUCCESS;
-  }
-  XrResult RequestExitSession() override {
-    calls.push_back("RequestExitSession");
-    exit_requested = true;
-    if (exit_on_request) {
-      xr_probe::Event stopping;
-      stopping.type = xr_probe::Event::Type::kSessionState;
-      stopping.state = XR_SESSION_STATE_STOPPING;
-      xr_probe::Event exiting = stopping;
-      exiting.state = XR_SESSION_STATE_EXITING;
-      script.push_front({stopping, exiting});
-    }
-    return XR_SUCCESS;
-  }
-  XrResult WaitFrame(xr_probe::FrameState* state) override {
-    const int index = frames++;
-    calls.push_back("WaitFrame");
-    for (const auto& [at, result] : wait_results) {
-      if (at == index) return result;
-    }
-    state->predicted_display_time = 1000000000LL + index * 11111111LL;
-    state->predicted_display_period = 11111111LL;
-    state->should_render = render;
-    return XR_SUCCESS;
-  }
-  XrResult BeginFrame() override { return XR_SUCCESS; }
-  XrResult LocateViews(XrTime, XrView views[2], bool* valid) override {
-    for (int i = 0; i < 2; i++) {
-      views[i].pose.orientation = {0, 0, 0, 1};
-      views[i].pose.position = {i == 0 ? -0.03f : 0.03f, 1.6f, 0};
-      views[i].fov = {-0.8f, 0.7f, 0.8f, -0.85f};
-    }
-    *valid = true;
-    return XR_SUCCESS;
-  }
-  XrResult AcquireImage(uint64_t, uint32_t* index) override {
-    *index = 0;
-    return XR_SUCCESS;
-  }
-  XrResult WaitImage(uint64_t) override { return XR_SUCCESS; }
-  XrResult ReleaseImage(uint64_t) override { return XR_SUCCESS; }
-  XrResult EndFrame(XrTime, const xr_probe::Layers& layers) override {
-    if (layers.projection) layers_with_projection++;
-    quad_layers += static_cast<int>(layers.quads.size());
-    last_layers = layers;
-    return XR_SUCCESS;
-  }
-  XrResult RefreshRates(std::vector<float>* out, float* current) override {
-    if (!has_rates) return XR_ERROR_FUNCTION_UNSUPPORTED;
-    *out = rates;
-    *current = rate;
-    return XR_SUCCESS;
-  }
-  XrResult RequestRefreshRate(float wanted) override {
-    calls.push_back("RequestRefreshRate " + std::to_string(static_cast<int>(wanted)));
-    rate = wanted;
-    return XR_SUCCESS;
-  }
-  void DestroySession() override { calls.push_back("DestroySession"); }
-  void DestroyInstance() override { calls.push_back("DestroyInstance"); }
-  std::string ResultName(XrResult result) override {
-    return "XrResult " + std::to_string(static_cast<int>(result));
-  }
-
-  int Count(const std::string& call) const {
-    int n = 0;
-    for (const auto& c : calls) n += c == call ? 1 : 0;
-    return n;
-  }
-  // The index of the first |call| after position |from|, -1 when none
-  int Find(const std::string& call, int from = 0) const {
-    for (int i = from; i < static_cast<int>(calls.size()); i++) {
-      if (calls[i] == call) return i;
-    }
-    return -1;
-  }
-
-  xr_probe::Layers last_layers;
-
- private:
-  std::deque<xr_probe::Event> pending;
-  bool round_open = false;
-};
-
-class FakeGpu : public xr_probe::Gpu {
- public:
-  xr_probe::AdapterId adapter{42, 0};
-  bool open = false;
-  bool closed = false;
-  int eyes_drawn[2] = {0, 0};
-  int screens_drawn = 0;
-  int wrapped = 0;
-  int unwrapped = 0;
-  xr_probe::Content content;
-  std::vector<double> times;
-
-  bool Open(xr_probe::GpuInfo* info, std::string*) override {
-    open = true;
-    info->adapter_name = "Fake GPU";
-    info->adapter = adapter;
-    info->feature_level = 0xb000;
-    return true;
-  }
-  bool WrapImages(const xr_probe::Swapchain&, std::string* path,
-                  std::string*) override {
-    wrapped++;
-    *path = "direct";
-    return true;
-  }
-  void UnwrapImages(uint64_t) override { unwrapped++; }
-  bool DrawEye(const xr_probe::Swapchain&, uint32_t, int eye, const XrView&,
-               double, double time, std::string*) override {
-    eyes_drawn[eye]++;
-    times.push_back(time);
-    return true;
-  }
-  bool DrawScreen(const xr_probe::Swapchain&, uint32_t, std::string*) override {
-    screens_drawn++;
-    return true;
-  }
-  void Finish() override {}
-  xr_probe::Content ContentNow() override { return content; }
-  xr_probe::GpuMemory Memory() override { return {}; }
-  void Close() override { closed = true; }
-};
-
-
 xr_probe::Options TestOptions(std::vector<std::string>* log) {
   xr_probe::Options options;
-  options.mode = xr_probe::Mode::kPattern;
-  options.fps = 24;
+  options.content.mode = xr_probe::Mode::kPattern;
+  options.content.fps = 24;
   // A fake clock: every call is 1 ms later
   auto clock = std::make_shared<double>(0.0);
   options.now = [clock] { return *clock += 0.001; };
@@ -484,13 +247,6 @@ xr_probe::Options TestOptions(std::vector<std::string>* log) {
   options.log = [log](const std::string& line) { log->push_back(line); };
   options.system_wait_seconds = 5;
   return options;
-}
-
-bool Logged(const std::vector<std::string>& log, const std::string& part) {
-  for (const auto& line : log) {
-    if (line.find(part) != std::string::npos) return true;
-  }
-  return false;
 }
 
 void TestSessionWithHeadsetTakenOff() {
@@ -533,7 +289,9 @@ void TestSessionWithHeadsetTakenOff() {
   Check(runtime.Count("RequestRefreshRate 72") >= 1, "24 fps on 72, 90 or 120 Hz: 72 asked");
   const auto status = controller.StatusNow();
   Check(status.phase == "stopped", "stopped at the end");
-  Check(status.reason == "the session ended", "reason: " + status.reason);
+  // The runtime closed it, the app did not ask
+  Check(status.reason == xr_probe::StopReason::kEndedFromHeadset,
+        std::string("reason: ") + xr_probe::StopReasonCode(status.reason));
   Check(Logged(log, "recentered"), "recentered at the first frame");
   Check(Logged(log, "swapchain formats offered: R8G8B8A8_UNORM_SRGB; chosen: R8G8B8A8_UNORM_SRGB"),
         "formats logged");
@@ -564,9 +322,8 @@ void TestInstanceLost() {
   const auto status = controller.StatusNow();
   Check(status.instance_lost, "instance lost in the status");
   Check(status.phase == "stopped", "stopped");
-  Check(status.reason.find("lost") != std::string::npos ||
-            status.reason.find("frame loop") != std::string::npos,
-        "reason: " + status.reason);
+  Check(status.reason == xr_probe::StopReason::kRuntimeLost,
+        "reason: " + status.detail);
 }
 
 void TestInstanceLossPendingEvent() {
@@ -590,8 +347,9 @@ void TestNoRuntime() {
   xr_probe::Controller controller(&runtime, &gpu, TestOptions(&log));
   controller.Run();
   const auto status = controller.StatusNow();
-  Check(status.reason.rfind("no OpenXR runtime is active on this computer", 0) == 0,
-        "no runtime: " + status.reason);
+  Check(status.reason == xr_probe::StopReason::kNoRuntime &&
+            status.detail.rfind("no OpenXR runtime is active on this computer", 0) == 0,
+        "no runtime: " + status.detail);
   Check(runtime.Count("DestroyInstance") == 0, "no instance to destroy");
   Check(gpu.closed, "the GPU side closed");
 }
@@ -603,8 +361,9 @@ void TestOtherAdapter() {
   std::vector<std::string> log;
   xr_probe::Controller controller(&runtime, &gpu, TestOptions(&log));
   controller.Run();
-  Check(controller.StatusNow().reason == "the headset is on another graphics card",
-        "other adapter: " + controller.StatusNow().reason);
+  Check(controller.StatusNow().reason == xr_probe::StopReason::kOtherGpu &&
+            controller.StatusNow().detail == "the headset is on another graphics card",
+        "other adapter: " + controller.StatusNow().detail);
   Check(runtime.Count("CreateSession") == 0, "no session on the wrong card");
   Check(runtime.Count("DestroyInstance") == 1, "the instance destroyed");
 }
@@ -627,8 +386,9 @@ void TestWaitingForTheHeadset() {
   std::vector<std::string> log2;
   xr_probe::Controller controller2(&never, &gpu2, TestOptions(&log2));
   controller2.Run();
-  Check(controller2.StatusNow().reason == "no headset connected to the runtime",
-        "no headset: " + controller2.StatusNow().reason);
+  Check(controller2.StatusNow().reason == xr_probe::StopReason::kNoHeadset &&
+            controller2.StatusNow().detail.rfind("no headset connected to the runtime", 0) == 0,
+        "no headset: " + controller2.StatusNow().detail);
 }
 
 void TestStopFromTheApp() {
@@ -653,7 +413,8 @@ void TestStopFromTheApp() {
   controller.Run();
   Check(runtime.Count("RequestExitSession") == 1, "the exit asked of the runtime");
   Check(runtime.Find("EndSession") > runtime.Find("RequestExitSession"), "ended after the request");
-  Check(controller.StatusNow().reason == "stopped by the app", "reason: " + controller.StatusNow().reason);
+  Check(controller.StatusNow().reason == xr_probe::StopReason::kStoppedByApp,
+        "reason: " + controller.StatusNow().detail);
 }
 
 void TestScreenMode() {
@@ -667,8 +428,10 @@ void TestScreenMode() {
   gpu.content.frame_count = 1;
   std::vector<std::string> log;
   auto options = TestOptions(&log);
-  options.mode = xr_probe::Mode::kScreen;
-  options.stereo = xr_probe::ScreenStereo::kLeftRight;
+  options.content.mode = xr_probe::Mode::kScreen;
+  options.content.stereo = xr_probe::ScreenStereo::kLeftRight;
+  // 32:9 is full side by side: the app says so (version 1 guesses nothing)
+  options.content.squeeze = xr_probe::Squeeze::kFull;
   xr_probe::Controller controller(&runtime, &gpu, options);
   controller.Run();
   Check(gpu.eyes_drawn[0] == 0, "no eye pass for a screen");
@@ -699,6 +462,6 @@ int main() {
   TestWaitingForTheHeadset();
   TestStopFromTheApp();
   TestScreenMode();
-  std::printf("%d checks, %d failed\n", checks, failures);
-  return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+  std::printf("%d checks, %d failed\n", fakes::checks, fakes::failures);
+  return fakes::failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

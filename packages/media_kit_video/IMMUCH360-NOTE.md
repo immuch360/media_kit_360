@@ -285,27 +285,100 @@ Patches:
    takes the table out of the player before it may go to another video. The equirectangular pass is unchanged: a
    stitched file has no table.
 
-15. Windows, the headset probe: OpenXR in the plugin, off unless built with the `MEDIA_KIT_360_XR` option of CMake
-   (`windows/xr_*.h` and `.cc`, `windows/projection_view.h`, `lib/xr.dart`; Immuch360 store/m2/release-48/xr-probe.md).
-   Renderer C's view takes four tangents (`uTanFov`, left, right, up and down, signed as OpenXR's `XrFovf`) in place of
-   the symmetric `uTanHalfFov`, and a rotation built from an eye's orientation (`ProjectionView.eye`, `rows`,
-   `tangents`; `projection_view::EyeView`: OpenXR's view space has -z ahead, renderer C's +z, so the eye sees the
-   sphere through S R S, S = diag(1, 1, -1), then the recentering's turn about y); the window's view gives the same
-   uniforms as before. `ProjectionRenderer::DrawFrame` draws from another renderer's intermediate texture of the share
-   group; kind 3 is a test pattern drawn with no frame (`kFragmentPattern`: a grey ramp ahead, one coloured patch per
-   eye, a bar moving at a stepped time, green up, orange down). With the option on: the Khronos loader
-   (`openxr_loader.dll` 1.1.65 of the `OpenXR.Loader` package, Apache 2.0 OR MIT, SHA-256 checked) is bundled next to
-   the executable and opened from there at the first start only; the vendored headers (`windows/third_party/openxr`,
-   Apache 2.0 OR MIT) serve every build. `VideoOutputManager.XrStart` (handle, mode "sphere", "screen" or "pattern",
-   stereo, fps, yaw, logPath, label), `XrStop`, `XrRecenter` and `XrState` run one probe at a time on a thread of its
-   own (`xr_session.cc`): the D3D11 device of the plugin's ANGLE display (`EGL_EXT_device_query`) with multithread
-   protection, its adapter LUID compared with `xrGetD3D11GraphicsRequirementsKHR`'s, an ES 3.0 context in the players'
-   share group, an sRGB swapchain per eye written through a linear view (`EGL_D3D_TEXTURE_ANGLE` pbuffers, "direct"),
-   or a UNORM texture copied into the image ("copy"), the session's states (begun once ready, ended once stopping,
-   left once exiting or lost, `XR_ERROR_INSTANCE_LOST` handled), `XR_FB_display_refresh_rate` asked for a multiple of
-   the content's rate, a flat screen on quad layers (one per eye for 3D). Every step goes to the log file given. The
-   player's frame is published after its draw is finished on the GPU (`VideoOutput::XrSnapshot`). Not in the probe:
-   the raw files of two players, the stabilisation in the headset, controllers, subtitles, audio routing.
+15. Windows, the headset view: OpenXR in the plugin, off unless built with the `MEDIA_KIT_360_XR` option of CMake
+   (`windows/xr_*.h` and `.cc`, `windows/projection_view.h`, `lib/xr.dart`, `lib/src/xr_headset.dart`; Immuch360
+   store/m2/release-48/pc-vr-v1-plugin.md). Experimental: not yet tried in a headset by the project. It began as the
+   probe of 14 November 2026 (branch `xr-probe`) and is version 1 since branch `xr-v1`; the C++ namespace keeps the
+   probe's name.
+   - Renderer C's view takes four tangents (`uTanFov`, left, right, up and down, signed as OpenXR's `XrFovf`) in
+     place of the symmetric `uTanHalfFov`, and a rotation built from an eye's orientation (`ProjectionView.eye`,
+     `rows`, `tangents`; `projection_view::EyeView`: OpenXR's view space has -z ahead, renderer C's +z, so the eye
+     sees the sphere through S R S, S = diag(1, 1, -1)); the window's view gives the same uniforms as before.
+     Recentering keeps an anchor (`projection_view::Anchor`): the head's yaw only upright, its yaw and pitch lying
+     down (never the roll), the yaw taken from the head's forward and up together so that a head looking straight up
+     has one; the sphere (`AnchoredEyeView`), the flat screen's pose and the strip's pose all derive from it. Upright
+     it gives the probe's views exactly.
+   - `ProjectionRenderer::DrawFrame` draws from another renderer's intermediate texture of the share group. Kind 3 is
+     a test pattern drawn with no frame (`kFragmentPattern`: a grey ramp ahead, one coloured patch per eye, a bar
+     moving at a stepped time, green up, orange down). Kind 4 (`kFragmentFlat`, in every build) draws a flat film as
+     it is, letterboxed with black bars, a stereo film's eye (`uEye`, the left one) at the shape it is seen with
+     (`uAspect`, `ProjectionSetup.aspect`, 0 for its shape in the frame); Dart: `ProjectionKind.flat` (its `code`
+     is 4: `ProjectionKind` now carries the plugin's numbers), `PluginProjection.flat(layout:, aspect:)`. The flat
+     player uses it while its film is in the headset, so the window keeps its normal picture.
+   - With the option on, the Khronos loader (`openxr_loader.dll` 1.1.65 of the `OpenXR.Loader` package, Apache 2.0
+     OR MIT, SHA-256 checked at build time, nothing downloaded at run time) is bundled next to the executable and
+     opened from there by full path at the first view only; the vendored headers (`windows/third_party/openxr`,
+     Apache 2.0 OR MIT, unchanged) serve every build. CMake gives the plugin's commit to the log when its folder is
+     a git checkout.
+   - The method calls: `VideoOutputManager.XrRuntimeInfo` (the active runtime from `XR_RUNTIME_JSON` or
+     `HKLM\SOFTWARE\Khronos\OpenXR\1\ActiveRuntime` in the 64 bit view, whether its manifest exists, the file name
+     only and the runtime guessed from the path; nothing loaded), `XrStart` (content, logPath, matchRefreshRate,
+     actionNames, appVersion; returns at once), `XrSetContent` and `XrSetContentRate` (the next video or another mode
+     with no new session), `XrSetStrip` (RGBA, at most 1024 x 160, visible), `XrRecenter` (lyingDown), `XrPoll`
+     (after: the state and the events after that sequence) and `XrStop` (answered off the platform thread). Without
+     the option every call answers `notInBuild`; the Dart side answers `notWindows` on Linux and macOS without a call
+     and `notInBuild` without the plugin. Nothing calls into Dart: the app polls (10 times a second while a view
+     runs), the queue keeps 64 events, the oldest dropped, numbered on from one view to the next.
+   - Portable, with std::thread only (`xr_session_core.h/.cc`, no Windows, Direct3D or OpenGL header, a grep in CI):
+     one view at a time on a thread of its own; `Stop` cuts the content source first (no frame of a player is read
+     once it began, so the player may go), asks the controller to end and waits within its bound; a view that did not
+     end is `runtimeNotAnswering` and the next start answers that until its thread ends; the plugin's teardown
+     detaches a thread that does not end (the core is never destroyed, so no joinable thread is left in a static).
+     `xr_session.cc` and `xr_runtime_info.cc` keep the Windows parts: the loader's path, the log file, the registry,
+     the real runtime and GPU side.
+   - The controller (`xr_controller.cc`, portable): the GPU side opened, the Basic Render Driver (vendor 0x1414,
+     device 0x8c) refused as `gpuTooWeak`, the instance (XR_KHR_D3D11_enable, XR_FB_display_refresh_rate,
+     XR_EXT_hp_mixed_reality_controller and XR_BD_controller_interaction when offered), the API layers the loader
+     lists logged, up to 60 s waiting for a headset, the adapter's LUID and feature level checked, the session, the
+     controllers, the formats; then the session's states (begun once ready, ended once stopping, left once exiting or
+     lost) and the frames. What is shown changes at the next frame (`Inbox`): the eye swapchains are made when first
+     needed and kept, the flat screen's at the frame's size and destroyed when the screen is left, the refresh rate
+     chosen again when the frame rate changes (a whole multiple where the runtime offers one; matching can be off),
+     a new source recentered. Idle mode draws a dark grey projection layer (0.08) with the strip. The flat screen's
+     eyes come from the stereo layout and the squeeze the app gives (full or half side by side or over under; no
+     guess from the frame's shape): one quad, or one per eye with `eyeVisibility` and its part of the frame, 2.4 m
+     wide, 2.5 m ahead of the anchor.
+   - The strip: a 1024 x 160 swapchain made at the first image, the app's RGBA bytes uploaded with `glTexSubImage2D`
+     only when new and copied into the image with the nearest texel, an opaque quad 0.9 x 0.14 m, 1.4 m away 20
+     degrees under the anchor's forward, or 0.15 m under the flat screen; shown only while visible, dropped and
+     logged when the runtime's `maxLayerCount` leaves no room.
+   - The controllers (`xr_input.h/.cc`, portable): an action set "player" with `play_pause` (float), `seek`
+     (vector2f), `seek_press` (trackpads), `recenter`, `exit` and `haptic`, both hands as subaction paths, the
+     localized names from the app (English when refused). Bindings suggested per profile from one table
+     (`BindingsFor`): simple controller, Oculus Touch, Valve Index, HTC Vive, Microsoft motion controller, and HP
+     Mixed Reality, Pico 4 and Neo3 only with their extension; haptics on both hands for every profile; a profile
+     the runtime rejects is logged and skipped, with none accepted the view runs and its state says it has no
+     controller. `Gestures`: a trigger is pressed above 0.75 and released under 0.35; seek 10 s once the stick passes
+     0.7, again every 0.5 s while held, 30 s steps after 2 s, over under 0.3, a trackpad only while clicked;
+     recenter on a release before 1 s, lying down toggled at 1 s held; leaving at 1 s held, with haptic pulses; the
+     simple controller's select is play or pause when short and recenter when held. Inputs are read only while the
+     session is focused, and losing focus resets the gestures (a button held across it fires nothing). Recenter and
+     lying down act in the headset at once and are reported; play or pause, seek and leaving are only reported, for
+     the app to apply to the window's player. A profile change is logged and reported per hand.
+   - Stop codes (`StopReason`, `XrStopReason` in Dart) with an English detail: `stoppedByApp`, `endedFromHeadset`
+     (EXITING the app did not ask), `noRuntime` (RUNTIME_UNAVAILABLE or RUNTIME_FAILURE), `loaderMissing`,
+     `noHeadset` (none within 60 s), `otherGpu` (LUID), `gpuTooWeak` (feature level, Basic Render Driver),
+     `runtimeLost` (instance or session lost, loss pending), `runtimeNotAnswering` (a stop that timed out),
+     `alreadyRunning`, `notInBuild`, `notWindows`, `failed`. Leaving VISIBLE for more than 2 s gives a visibility
+     event, coming back another. The statistics every 5 s: frames, late frames, draw time, refresh rate, GPU memory
+     (a flag above 90 % of the budget), the time taken for the player's frame, strip uploads.
+   - Proved without a headset (CI): the portable tests with g++ and ASan and UBSan in the analyze job and with MSVC
+     `/W4 /WX` in the `windows-xr` job (the probe's 140 checks, `test/xr_probe_test.cc`, and version 1's,
+     `test/xr_v1_test.cc`: 50 start and stop cycles with every handle destroyed once in order, a stop while waiting
+     for the headset, during the preparation and while the runtime hangs in xrWaitFrame, a detached teardown, the
+     content changes, the six screen cases, the binding table, the gestures with time steps, the recentering, the
+     strip, every stop code, the visibility events, the event queue, the runtime guess); on the hosted runner
+     (`test/xr/xr_windows_test.cc`) the registry with no runtime and with `XR_RUNTIME_JSON` naming a missing file,
+     the bundled loader with no runtime and every action call failing cleanly, the WARP device refused as
+     `gpuTooWeak`, the swapchain images taken in place with the bytes written, the strip's 1024 x 160 bytes read back
+     unchanged; the flat pass letterboxing in ANGLE (`test/sphere/plugin_shaders_windows_test.dart`); the Dart calls
+     both ways (`test/xr_headset_test.dart`).
+   - Waits for a headset (the session of Immuch360 store/m2/release-48/pc-vr-v1-plan.md, section 5): that a real
+     runtime takes the plugin's device, orientation and 3D depth, gamma on a real driver, comfort and judder, the
+     refresh rates honoured, the bindings on real controllers (SteamVR's binding screen with the localized names),
+     the strip's size and place, the app surviving a headset taken off and a runtime killed, GPU memory with an 8K
+     video. Not in version 1: the raw files of two players, the stabilisation in the headset, photos, a frame ring or
+     fence (the frame is published after the player's glFinish), audio routing.
 
 Not done yet (plan 20-plan-desktop.md, 2.2): the D3D11 device on the adapter Flutter uses. It is not needed on a
 laptop with two GPUs: Flutter's ANGLE, the plugin's device and display and mpv's decoder all take the adapter DXGI

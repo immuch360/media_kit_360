@@ -58,15 +58,33 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -I.. stabilization_test.cc -o "$RUNNER_TEMP/stabilization_test"
           "$RUNNER_TEMP/stabilization_test"
 
-      # The headset probe (windows/xr_*.h and .cc, IMMUCH360-NOTE.md patch 15) without a headset: the eye's view and
-      # its four tangents, the adapter check, the swapchain format and the refresh rate chosen, the session's states
-      # with a fake runtime (begun, ended when the headset is taken off, begun again, a lost instance)
-      - name: Headset probe tests
+      # The headset view (windows/xr_*.h and .cc, IMMUCH360-NOTE.md patch 15) keeps its core portable: no Windows,
+      # Direct3D or OpenGL header in the files the tests below build with g++
+      - name: The headset view's portable files
+        working-directory: packages/media_kit_video/windows
+        run: |
+          files="xr_probe_core.h xr_runtime.h xr_controller.h xr_controller.cc xr_input.h xr_input.cc
+            xr_session_core.h xr_session_core.cc projection_view.h test/xr_fakes.h test/xr_probe_test.cc
+            test/xr_v1_test.cc"
+          if grep -inE '^[[:space:]]*#[[:space:]]*include[[:space:]]*[<"](windows|winreg|d3d|dxgi|wrl|egl/|gles|gl/|openxr/openxr_platform)' $files; then
+            echo "::error::a Windows, Direct3D or OpenGL header in a portable file of the headset view"
+            exit 1
+          fi
+
+      # The headset view without a headset, with ASan and UBSan: the probe's checks (the eye's view and its four
+      # tangents, the adapter check, the swapchain format and the refresh rate chosen, the session's states with a fake
+      # runtime) and version 1's (the session core's lifecycle with a hanging runtime, the content changing with no
+      # new session, the screen's six stereo cases, the controllers' bindings and gestures, the recentering upright
+      # and lying down, the strip, every stop code, the visibility events, the event queue, the runtime's guess)
+      - name: Headset view tests
         working-directory: packages/media_kit_video/windows/test
         run: |
-          g++ -std=c++17 -Wall -Wextra -Werror -I.. -I../third_party/openxr/include xr_probe_test.cc ../xr_controller.cc \
-            -o "$RUNNER_TEMP/xr_probe_test"
-          "$RUNNER_TEMP/xr_probe_test"
+          for test in xr_probe_test xr_v1_test; do
+            g++ -std=c++17 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+              -I.. -I../third_party/openxr/include "$test.cc" ../xr_controller.cc ../xr_input.cc ../xr_session_core.cc \
+              -lpthread -o "$RUNNER_TEMP/$test"
+            "$RUNNER_TEMP/$test"
+          done
 
   linux:
     name: Linux build of the example
@@ -168,12 +186,13 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-  # The headset probe (IMMUCH360-NOTE.md, patch 15) built in: the example with MEDIA_KIT_360_XR on, the OpenXR loader
-  # downloaded, checked and bundled, the probe's tests built by MSVC with the plugin's warnings and run where the
+  # The headset view (IMMUCH360-NOTE.md, patch 15) built in: the example with MEDIA_KIT_360_XR on, the OpenXR loader
+  # downloaded, checked and bundled, the view's tests built by MSVC with the plugin's warnings and run where the
   # build is. GitHub's runners have no GPU and no OpenXR runtime: this proves the build, the link, the loader, the
-  # ANGLE device and the swapchain images; what a headset shows waits for one (store/m2/release-48/xr-probe.md)
+  # registry read, the ANGLE device, the swapchain images and the strip; what a headset shows waits for one
+  # (Immuch360 store/m2/release-48/pc-vr-v1-plugin.md)
   windows-xr:
-    name: Windows build with the headset probe
+    name: Windows build with the headset view
     runs-on: windows-latest
     timeout-minutes: 45
     defaults:
@@ -207,18 +226,20 @@ jobs:
           done
           sha256sum openxr_loader.dll
 
-      # The portable tests with MSVC and the Windows ones (the bundled loader with no runtime, the ANGLE device and
-      # its LUID, the swapchain images and the values they hold), from the build's folder
-      - name: The probe's tests built by MSVC
+      # The portable tests with MSVC and the Windows ones (the registry with no runtime, the bundled loader with no
+      # runtime and the action calls failing cleanly, the ANGLE device and its LUID, gpuTooWeak on the runner's Basic
+      # Render Driver, the swapchain images and the values they hold, the strip's bytes), from the build's folder
+      - name: The headset view's tests built by MSVC
         run: |
           cmake -S packages/media_kit_video/windows/test/xr -B "$RUNNER_TEMP/xr-tests" -A x64 \
             -DMEDIA_KIT_360_ANGLE="$GITHUB_WORKSPACE/example/build/windows/x64/ANGLE"
           cmake --build "$RUNNER_TEMP/xr-tests" --config Release
 
-      - name: The probe's tests
+      - name: The headset view's tests
         working-directory: example/build/windows/x64/runner/Release
         run: |
           "$RUNNER_TEMP/xr-tests/Release/xr_probe_test.exe"
+          "$RUNNER_TEMP/xr-tests/Release/xr_v1_test.exe"
           cp "$RUNNER_TEMP/xr-tests/Release/xr_windows_test.exe" .
           ./xr_windows_test.exe
           rm xr_windows_test.exe

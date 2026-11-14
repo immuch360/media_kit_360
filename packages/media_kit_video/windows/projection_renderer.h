@@ -33,12 +33,16 @@
 // (lib/src/projection_output.dart).
 struct ProjectionSetup {
   // 0 an equirectangular frame, 1 a fisheye pair, 2 a GoPro EAC pair; 3 the
-  // test pattern of the headset probe, which reads no frame (patch 15)
+  // test pattern of the headset view, which reads no frame; 4 a flat film
+  // letterboxed (patch 15)
   int32_t kind = 0;
   // Equirectangular: the eye shown, in fractions of the frame (x, y, width,
   // height, top left origin), and the part of the sphere it covers
   float eye[4] = {0.0f, 0.0f, 1.0f, 1.0f};
   float crop[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+  // Immuch360, kind 4 (patch 15): the shape of the picture of |eye| as seen,
+  // width / height; 0 for the shape it has in the frame
+  float aspect = 0.0f;
   // Stitches: the streams side by side in the frame, which are decoded, and
   // the uniforms of the lenses or faces by name
   int32_t tracks = 1;
@@ -199,9 +203,10 @@ class ProjectionRenderer {
   bool prepared_ = false;
   GLuint vertex_array_ = 0;
   GLuint vertex_shader_ = 0;
-  // Immuch360: the three projections and the test pattern (patch 15)
-  GLuint programs_[4] = {0, 0, 0, 0};
-  bool program_failed_[4] = {false, false, false, false};
+  // Immuch360: the three projections, the test pattern and the flat pass
+  // (patch 15)
+  GLuint programs_[5] = {0, 0, 0, 0, 0};
+  bool program_failed_[5] = {false, false, false, false, false};
   GLuint frame_texture_ = 0;
   GLuint frame_fbo_ = 0;
   int32_t frame_width_ = 0;

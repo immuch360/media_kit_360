@@ -1,5 +1,5 @@
 // The passes of renderer C (windows/projection_shaders.h of this package, IMMUCH360-NOTE.md patch 6) in
-// the ANGLE of the Windows build, without a window: the sources are read from the header and put together as
+// the ANGLE of the Windows build, without a window (the flat pass of kind 4, patch 15, letterboxes a film): the sources are read from the header and put together as
 // ProjectionRenderer does, all three programs must compile and link in OpenGL ES 3.0, and the equirectangular pass
 // draws a synthetic frame (upper half red, lower half blue, the quarter ahead green) where the view looks: up is up,
 // the first row of the output is the top of the view, the yaw turns to the right, a VR180 crop is black behind. The
@@ -52,7 +52,7 @@ Map<String, String> _shaderSources() {
 }
 
 /// The fragment program of [kind] (0 equirectangular, 1 fisheye pair, 2 EAC pair, 3 the test pattern of the headset
-/// probe), in ProjectionRenderer::Program's order
+/// view, 4 a flat film), in ProjectionRenderer::Program's order
 String _fragment(Map<String, String> sources, int kind) => [
   sources['kFragmentHeader']!,
   '#define PROJECTION_KIND $kind\n',
@@ -61,6 +61,8 @@ String _fragment(Map<String, String> sources, int kind) => [
     sources['kFragmentEquirect']!
   else if (kind == 3)
     sources['kFragmentPattern']!
+  else if (kind == 4)
+    sources['kFragmentFlat']!
   else ...[
     sources['kFragmentStreams']!,
     kind == 1 ? sources['kFragmentFisheye']! : sources['kFragmentEac']!,
@@ -366,11 +368,14 @@ void main() {
 
   tearDownAll(arena.releaseAll);
 
-  test('the three passes and the test pattern compile and link in OpenGL ES 3.0', () {
+  test('the three passes, the test pattern and the flat pass compile and link in OpenGL ES 3.0', () {
     final sources = _shaderSources();
-    expect(sources.keys, containsAll(['kVertexSource', 'kFragmentCommon', 'kFragmentEquirect', 'kFragmentMain']));
+    expect(
+      sources.keys,
+      containsAll(['kVertexSource', 'kFragmentCommon', 'kFragmentEquirect', 'kFragmentFlat', 'kFragmentMain']),
+    );
     final vertex = gl.compile(_glVertexShader, sources['kVertexSource']!);
-    for (final kind in [0, 1, 2, 3]) {
+    for (final kind in [0, 1, 2, 3, 4]) {
       final program = gl.link(vertex, gl.compile(_glFragmentShader, _fragment(sources, kind)));
       expect(program, greaterThan(0), reason: 'projection $kind');
     }
@@ -540,6 +545,88 @@ void main() {
     expect(draw(yaw: -45, pitch: -16, eye: 0.5, time: 0), (255, 255, 255), reason: 'the bar at its start');
     expect(draw(yaw: 0, pitch: -16, eye: 0.5, time: 2), (255, 255, 255), reason: 'the bar half way after 2 s');
     expect(draw(yaw: 0, pitch: 80, eye: 0.5).$2, greaterThan(150), reason: 'green up');
+  }, skip: skip);
+
+  test('the flat pass (kind 4, patch 15): the frame letterboxed, the left eye of a stereo film', () {
+    final sources = _shaderSources();
+    final program = gl.link(
+      gl.compile(_glVertexShader, sources['kVertexSource']!),
+      gl.compile(_glFragmentShader, _fragment(sources, 4)),
+    );
+    // A frame of [width] x [height]: its left half red, its right half blue, or for a side by side film the left
+    // eye red and blue, the right eye green
+    void upload(int width, int height, {bool sideBySide = false}) {
+      final pixels = arena<Uint8>(width * height * 4);
+      for (var y = 0; y < height; y++) {
+        for (var x = 0; x < width; x++) {
+          final i = (y * width + x) * 4;
+          final eyeWidth = sideBySide ? width ~/ 2 : width;
+          final rightEye = sideBySide && x >= eyeWidth;
+          final leftHalf = (x % eyeWidth) < eyeWidth ~/ 2;
+          pixels[i] = !rightEye && leftHalf ? 255 : 0;
+          pixels[i + 1] = rightEye ? 255 : 0;
+          pixels[i + 2] = !rightEye && !leftHalf ? 255 : 0;
+          pixels[i + 3] = 255;
+        }
+      }
+      final texture = arena<Uint32>();
+      gl
+        ..genTextures(1, texture)
+        ..activeTexture(_glTexture0)
+        ..bindTexture(_glTexture2d, texture.value)
+        ..texImage2D(_glTexture2d, 0, _glRgba8, width, height, 0, _glRgba, _glUnsignedByte, pixels)
+        ..texParameteri(_glTexture2d, _glTextureMinFilter, _glLinear)
+        ..texParameteri(_glTexture2d, _glTextureMagFilter, _glLinear)
+        ..texParameteri(_glTexture2d, _glTextureWrapS, _glClampToEdge)
+        ..texParameteri(_glTexture2d, _glTextureWrapT, _glClampToEdge);
+    }
+
+    final vertexArray = arena<Uint32>();
+    gl
+      ..genVertexArrays(1, vertexArray)
+      ..bindVertexArray(vertexArray.value)
+      ..useProgram(program)
+      ..viewport(0, 0, size, size);
+    // Draws the flat pass with [eye] and [aspect], then reads the pixel at (x, row), row 0 the first row of the output
+    (int, int, int) draw({required List<double> eye, required double aspect, required int x, required int row}) {
+      gl
+        ..uniform1i(gl.location(program, 'uSource'), 0)
+        ..uniform1f(gl.location(program, 'uSharp'), 0)
+        ..uniform2f(gl.location(program, 'uOutputSize'), size.toDouble(), size.toDouble())
+        ..uniform1f(gl.location(program, 'uTexelsPerPixel'), 1)
+        ..uniform4f(gl.location(program, 'uEye'), eye[0], eye[1], eye[2], eye[3])
+        ..uniform1f(gl.location(program, 'uAspect'), aspect)
+        ..drawArrays(_glTriangles, 0, 3)
+        ..finish();
+      final out = arena<Uint8>(4);
+      gl.readPixels(x, row, 1, 1, _glRgba, _glUnsignedByte, out);
+      expect(gl.getError(), 0);
+      return (out[0], out[1], out[2]);
+    }
+
+    const black = (0, 0, 0);
+    const red = (255, 0, 0);
+    const blue = (0, 0, 255);
+    const whole = [0.0, 0.0, 1.0, 1.0];
+    // A 2:1 frame into a square output: the full width, bars of a quarter above and below
+    upload(128, 64);
+    expect(draw(eye: whole, aspect: 2, x: 64, row: 128), red, reason: 'the left half of the picture');
+    expect(draw(eye: whole, aspect: 2, x: 192, row: 128), blue, reason: 'the right half');
+    expect(draw(eye: whole, aspect: 2, x: 128, row: 20), black, reason: 'the bar above');
+    expect(draw(eye: whole, aspect: 2, x: 128, row: 236), black, reason: 'the bar below');
+    expect(draw(eye: whole, aspect: 2, x: 64, row: 70), red, reason: 'inside the picture under the bar');
+    // A 1:2 frame: bars on the left and the right
+    upload(64, 128);
+    expect(draw(eye: whole, aspect: 0.5, x: 20, row: 128), black, reason: 'the bar on the left');
+    expect(draw(eye: whole, aspect: 0.5, x: 236, row: 128), black, reason: 'the bar on the right');
+    expect(draw(eye: whole, aspect: 0.5, x: 96, row: 128), red);
+    expect(draw(eye: whole, aspect: 0.5, x: 160, row: 128), blue);
+    // A half side by side 2:1 film: the left eye only, seen at 2:1 (not squeezed to 1:1)
+    upload(128, 64, sideBySide: true);
+    const leftEye = [0.0, 0.0, 0.5, 1.0];
+    expect(draw(eye: leftEye, aspect: 2, x: 64, row: 128), red, reason: 'the left eye, its left half');
+    expect(draw(eye: leftEye, aspect: 2, x: 192, row: 128), blue, reason: 'the left eye, its right half: no green');
+    expect(draw(eye: leftEye, aspect: 2, x: 128, row: 20), black, reason: 'letterboxed at the eye seen as 2:1');
   }, skip: skip);
 
   test('the fisheye pass reads the second lens from the texture of the second player (IMMUCH360-NOTE.md, patch 7)', () {

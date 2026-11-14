@@ -168,6 +168,7 @@ class PluginProjection {
     this.uniforms = const {},
     this.partnerStream = false,
     this.secondary = false,
+    this.aspect = 0,
   });
 
   /// The player that decodes stream 1 of a fisheye pair for the player that draws the view (two players for one raw
@@ -185,6 +186,13 @@ class PluginProjection {
     eye: eye == PluginEye.left ? layout.leftEye : layout.rightEye,
     crop: coverage == PluginCoverage.half ? const [0.25, 0.0, 0.5, 1.0] : const [0.0, 0.0, 1.0, 1.0],
   );
+
+  /// A flat film drawn as it is, letterboxed into the window (IMMUCH360-NOTE.md of this package, patch 15): what the
+  /// flat player shows while the headset view reads its frame. A stereo film in [layout] shows its left eye, at
+  /// [aspect] (width / height, the shape it is seen with: 16 / 9 for a half side by side 16:9 film) or, when 0, at
+  /// the shape the eye has in the frame.
+  factory PluginProjection.flat({PluginStereoLayout layout = PluginStereoLayout.mono, double aspect = 0}) =>
+      PluginProjection._(kind: ProjectionKind.flat, eye: layout.leftEye, aspect: aspect);
 
   /// The stitch of a raw 360 video from its rawProjection JSON version 2 (what the Immuch360 app writes for a raw
   /// camera file, read by [rawStitchUniforms]): a fisheye pair (Mei, equidistant, Kannala-Brandt) or a GoPro EAC
@@ -230,6 +238,9 @@ class PluginProjection {
 
   /// The second player of a pair, see [PluginProjection.secondary]
   final bool secondary;
+
+  /// [ProjectionKind.flat]: the picture's shape as seen, see [PluginProjection.flat]
+  final double aspect;
 
   /// Two players share the tier: each stream gets half of its intermediate frame, as the two streams stacked in one
   /// frame had
@@ -843,6 +854,7 @@ class PluginRenderer {
     maxOutputHeight: maxOutputHeight,
     partnerStream: projection.partnerStream,
     secondary: projection.secondary,
+    aspect: projection.aspect,
   );
 
   Future<PluginGpu?> _gpuAdapter() async {

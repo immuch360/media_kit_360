@@ -1,14 +1,16 @@
-// Immuch360: the headset probe (IMMUCH360-NOTE.md, patch 15), the GPU side on
+// Immuch360: the headset view (IMMUCH360-NOTE.md, patch 15), the GPU side on
 // Windows: the Direct3D 11 device of the plugin's ANGLE display (EGL_EXT_device_query,
 // EGL_D3D11_DEVICE_ANGLE), the one the players draw with, handed to the
-// OpenXR runtime; a context of the probe's thread in the players' share
+// OpenXR runtime; a context of the view's thread in the players' share
 // group, so that the intermediate texture of a player (its decoded frame) is
 // read where it is, with no copy; the swapchain images made drawable as ANGLE
 // pbuffers (EGL_ANGLE_d3d_texture_client_buffer), in place when ANGLE takes
 // the runtime's image through a linear view ("direct"), else through a
-// texture of the probe copied into the image ("copy"); and each eye drawn by
-// renderer C (ProjectionRenderer::DrawFrame) from the eye's pose and its four
-// tangents.
+// texture of the view copied into the image ("copy"); and each eye drawn by
+// renderer C (ProjectionRenderer::DrawFrame) from the eye's view (the
+// controller's maths, the anchor applied); a flat film's frame copied into the
+// screen's images; the strip's pixels uploaded (glTexSubImage2D) and copied
+// into its images.
 
 #ifndef XR_ANGLE_GPU_H_
 #define XR_ANGLE_GPU_H_
@@ -40,27 +42,33 @@ namespace xr_probe {
 
 class AngleGpu : public Gpu {
  public:
-  // The frame of the player shown, false once it is gone
-  using FrameSource = std::function<bool(ProjectionFrameSnapshot*)>;
+  // The frame of the player |handle|, false once it is gone (or the source
+  // cut by a stop)
+  using FrameSource =
+      std::function<bool(int64_t handle, ProjectionFrameSnapshot*)>;
   // A context of the players to share with, EGL_NO_CONTEXT when none
   using ShareContext = std::function<EGLContext(EGLDisplay)>;
 
-  AngleGpu(Mode mode, ScreenStereo stereo, FrameSource source,
-           ShareContext share);
+  AngleGpu(FrameSource source, ShareContext share);
   ~AngleGpu() override;
 
   bool Open(GpuInfo* info, std::string* error) override;
+  void SetContent(const ContentRequest& content) override;
   bool WrapImages(const Swapchain& swapchain, std::string* path,
                   std::string* error) override;
   void UnwrapImages(uint64_t swapchain) override;
   bool DrawEye(const Swapchain& swapchain, uint32_t index, int eye,
-               const XrView& view, double yaw_offset, double time,
+               const ProjectionView& view, double time,
                std::string* error) override;
   bool DrawScreen(const Swapchain& swapchain, uint32_t index,
                   std::string* error) override;
+  bool UploadStrip(const Swapchain& swapchain, uint32_t index,
+                   const uint8_t* rgba, uint32_t width, uint32_t height,
+                   std::string* error) override;
   void Finish() override;
-  Content ContentNow() override;
+  FrameInfo FrameNow() override;
   GpuMemory Memory() override;
+  SnapshotTiming TakeSnapshotTiming() override;
   void Close() override;
 
  private:
@@ -80,9 +88,13 @@ class AngleGpu : public Gpu {
                std::string* error);
   void Present(const Swapchain& swapchain, uint32_t index);
   bool PrepareBlit();
+  // The texture drawn as it is into the current surface, |width| x |height|
+  // from its top left corner
+  void Blit(GLuint texture, int32_t width, int32_t height);
+  // The player's frame, timed
+  bool Snapshot(ProjectionFrameSnapshot* out);
 
-  Mode mode_;
-  ScreenStereo stereo_;
+  ContentRequest content_;
   FrameSource source_;
   ShareContext share_;
   EGLDisplay display_ = EGL_NO_DISPLAY;
@@ -94,8 +106,12 @@ class AngleGpu : public Gpu {
   ProjectionRenderer renderer_;
   GLuint blit_program_ = 0;
   GLuint blit_vertex_array_ = 0;
+  GLuint strip_texture_ = 0;
+  uint32_t strip_width_ = 0;
+  uint32_t strip_height_ = 0;
   std::map<uint64_t, Wrapped> wrapped_;
   bool waiting_logged_ = false;
+  SnapshotTiming timing_;
 };
 
 }  // namespace xr_probe

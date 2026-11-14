@@ -1,4 +1,4 @@
-// Immuch360: the headset probe (IMMUCH360-NOTE.md, patch 15), the OpenXR
+// Immuch360: the headset view (IMMUCH360-NOTE.md, patch 15), the OpenXR
 // runtime through the Khronos loader (openxr_loader.dll, OpenXR-SDK 1.1.65,
 // Apache 2.0 OR MIT, bundled next to the app by the build with the MEDIA_KIT_360_XR
 // option). The loader is opened from its full path at the first start only,
@@ -39,6 +39,7 @@ class OpenXrRuntime : public Runtime {
 
   XrResult CreateInstance(const std::vector<std::string>& optional,
                           RuntimeInfo* info) override;
+  bool LoaderMissing() const override { return loader_missing_; }
   XrResult GetSystem(SystemInfo* info) override;
   XrResult CreateSession(void* device) override;
   XrResult SwapchainFormats(std::vector<int64_t>* formats) override;
@@ -59,6 +60,23 @@ class OpenXrRuntime : public Runtime {
   XrResult EndFrame(XrTime time, const Layers& layers) override;
   XrResult RefreshRates(std::vector<float>* rates, float* current) override;
   XrResult RequestRefreshRate(float rate) override;
+  XrResult StringToPath(const std::string& path, XrPath* out) override;
+  XrResult CreateActionSet(const std::string& name,
+                           const std::string& localized,
+                           uint64_t* id) override;
+  XrResult CreateAction(uint64_t set, const ActionSpec& spec,
+                        uint64_t* id) override;
+  XrResult SuggestBindings(
+      XrPath profile, const std::vector<SuggestedBinding>& bindings) override;
+  XrResult AttachActionSets(uint64_t set) override;
+  XrResult SyncActions(uint64_t set) override;
+  XrResult GetBoolean(uint64_t action, XrPath hand, BoolState* out) override;
+  XrResult GetFloat(uint64_t action, XrPath hand, FloatState* out) override;
+  XrResult GetVector2(uint64_t action, XrPath hand,
+                      Vector2State* out) override;
+  XrResult ApplyHaptic(uint64_t action, XrPath hand, float amplitude,
+                       XrDuration duration) override;
+  XrResult CurrentProfile(XrPath hand, std::string* profile) override;
   void DestroySession() override;
   void DestroyInstance() override;
   std::string ResultName(XrResult result) override;
@@ -67,9 +85,11 @@ class OpenXrRuntime : public Runtime {
   template <typename T>
   bool Load(const char* name, T* function);
   XrSwapchain SwapchainOf(uint64_t id) const;
+  XrAction ActionOf(uint64_t id) const;
 
   std::wstring loader_path_;
   HMODULE loader_ = nullptr;
+  bool loader_missing_ = false;
   std::string loader_error_;
   PFN_xrGetInstanceProcAddr get_proc_ = nullptr;
   XrInstance instance_ = XR_NULL_HANDLE;
@@ -80,6 +100,10 @@ class OpenXrRuntime : public Runtime {
   bool refresh_rate_ = false;
   uint64_t next_swapchain_ = 1;
   std::map<uint64_t, XrSwapchain> swapchains_;
+  bool actions_loaded_ = false;
+  uint64_t next_action_ = 1;
+  std::map<uint64_t, XrActionSet> action_sets_;
+  std::map<uint64_t, XrAction> actions_;
 
   PFN_xrEnumerateInstanceExtensionProperties enumerate_extensions_ = nullptr;
   PFN_xrCreateInstance create_instance_ = nullptr;
@@ -113,6 +137,19 @@ class OpenXrRuntime : public Runtime {
   PFN_xrEnumerateDisplayRefreshRatesFB refresh_rates_ = nullptr;
   PFN_xrGetDisplayRefreshRateFB refresh_rate_now_ = nullptr;
   PFN_xrRequestDisplayRefreshRateFB request_refresh_rate_ = nullptr;
+  PFN_xrEnumerateApiLayerProperties api_layers_ = nullptr;
+  PFN_xrStringToPath string_to_path_ = nullptr;
+  PFN_xrPathToString path_to_string_ = nullptr;
+  PFN_xrCreateActionSet create_action_set_ = nullptr;
+  PFN_xrCreateAction create_action_ = nullptr;
+  PFN_xrSuggestInteractionProfileBindings suggest_bindings_ = nullptr;
+  PFN_xrAttachSessionActionSets attach_action_sets_ = nullptr;
+  PFN_xrSyncActions sync_actions_ = nullptr;
+  PFN_xrGetActionStateBoolean action_boolean_ = nullptr;
+  PFN_xrGetActionStateFloat action_float_ = nullptr;
+  PFN_xrGetActionStateVector2f action_vector2_ = nullptr;
+  PFN_xrApplyHapticFeedback apply_haptic_ = nullptr;
+  PFN_xrGetCurrentInteractionProfile current_profile_ = nullptr;
 };
 
 }  // namespace xr_probe

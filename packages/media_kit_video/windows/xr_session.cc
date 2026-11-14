@@ -1,5 +1,5 @@
-// Immuch360: the headset probe's interface for the plugin (IMMUCH360-NOTE.md,
-// patch 15); see the header.
+// Immuch360: the headset view's interface for the plugin (IMMUCH360-NOTE.md,
+// patch 15), its Windows parts; see the header.
 
 #include "xr_session.h"
 
@@ -8,20 +8,21 @@
 #endif
 #include <Windows.h>
 
-#include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstdio>
 #include <ctime>
 #include <iostream>
 #include <memory>
 #include <mutex>
-#include <sstream>
-#include <thread>
 
 #include "angle_surface_manager.h"
 #include "xr_angle_gpu.h"
 #include "xr_openxr_runtime.h"
+
+// The plugin's commit, when CMake could read it (windows/CMakeLists.txt)
+#ifndef MEDIA_KIT_360_COMMIT
+#define MEDIA_KIT_360_COMMIT ""
+#endif
 
 namespace xr_session {
 
@@ -55,13 +56,20 @@ class LogFile {
     if (!path.empty()) {
       if (::_wfopen_s(&file_, Wide(path).c_str(), L"wb") != 0) {
         file_ = nullptr;
+        std::cout << "media_kit: XR: the log file could not be opened"
+                  << std::endl;
       }
     }
+    const auto now = std::time(nullptr);
+    char date[64] = {0};
+    std::tm local{};
+    localtime_s(&local, &now);
+    std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", &local);
+    Write(std::string("log opened ") + date);
   }
   ~LogFile() {
     if (file_ != nullptr) std::fclose(file_);
   }
-  bool open() const { return file_ != nullptr; }
 
   void Write(const std::string& line) {
     const double seconds = std::chrono::duration<double>(
@@ -85,187 +93,77 @@ class LogFile {
   std::chrono::steady_clock::time_point start_;
 };
 
-// The frame source, cut off by |Stop| so that the player may go while the
-// probe's thread still ends
-struct Source {
-  std::mutex mutex;
-  FrameSource function;
-};
+std::mutex g_source_mutex;
+FrameSource g_source;
 
-struct Probe {
-  std::thread thread;
-  std::mutex mutex;
-  std::condition_variable ended;
-  bool done = false;
-  bool stop_asked = false;
-  xr_probe::Controller* controller = nullptr;
-  xr_probe::Status last;
-  std::shared_ptr<Source> source;
-  std::string log_path;
-};
-
-std::mutex g_mutex;
-std::shared_ptr<Probe> g_probe;
-
-const char* ModeName(xr_probe::Mode mode) {
-  switch (mode) {
-    case xr_probe::Mode::kSphere:
-      return "sphere";
-    case xr_probe::Mode::kScreen:
-      return "screen";
-    case xr_probe::Mode::kPattern:
-      return "pattern";
+xr_probe::ViewParts MakeParts(const xr_probe::StartRequest& request,
+                              std::shared_ptr<xr_probe::SourceGate> gate) {
+  FrameSource source;
+  {
+    std::lock_guard<std::mutex> lock(g_source_mutex);
+    source = g_source;
   }
-  return "?";
+  xr_probe::ViewParts parts;
+  auto log = std::make_shared<LogFile>(request.log_path);
+  parts.log = [log](const std::string& line) { log->Write(line); };
+  parts.runtime = std::make_unique<xr_probe::OpenXrRuntime>(LoaderPath());
+  parts.gpu = std::make_unique<xr_probe::AngleGpu>(
+      // Read under the gate: once a stop closed it, no frame of a player is
+      // read again (the app may dispose the player)
+      [gate, source](int64_t handle, ProjectionFrameSnapshot* out) {
+        std::lock_guard<std::mutex> lock(gate->mutex);
+        return gate->open && source && source(handle, out);
+      },
+      [](EGLDisplay display) {
+        return ANGLESurfaceManager::ShareContextFor(display, 3);
+      });
+  return parts;
 }
 
-const char* StereoName(xr_probe::ScreenStereo stereo) {
-  switch (stereo) {
-    case xr_probe::ScreenStereo::kMono:
-      return "mono";
-    case xr_probe::ScreenStereo::kLeftRight:
-      return "left right";
-    case xr_probe::ScreenStereo::kTopBottom:
-      return "top bottom";
-  }
-  return "?";
-}
-
-void Body(std::shared_ptr<Probe> probe, StartOptions options) {
-  auto log = std::make_shared<LogFile>(options.log_path);
-  {
-    const auto now = std::time(nullptr);
-    char date[64] = {0};
-    std::tm local{};
-    localtime_s(&local, &now);
-    std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", &local);
-    log->Write(std::string("Immuch360 headset probe (media_kit_360 xr-probe), ") +
-               date);
-  }
-  std::ostringstream described;
-  described << "mode " << ModeName(options.mode) << ", stereo "
-            << StereoName(options.stereo) << ", content " << options.fps
-            << " fps, window yaw " << options.yaw << ", "
-            << (options.label.empty() ? "no label" : options.label);
-  log->Write(described.str());
-  if (!options.log_path.empty() && !log->open()) {
-    std::cout << "media_kit: XR: the log file could not be opened" << std::endl;
-  }
-  const auto source = probe->source;
-  {
-    xr_probe::OpenXrRuntime runtime(LoaderPath());
-    xr_probe::AngleGpu gpu(
-        options.mode, options.stereo,
-        [source](ProjectionFrameSnapshot* out) {
-          std::lock_guard<std::mutex> lock(source->mutex);
-          return source->function && source->function(out);
-        },
-        [](EGLDisplay display) {
-          return ANGLESurfaceManager::ShareContextFor(display, 3);
-        });
-    xr_probe::Options controller_options;
-    controller_options.mode = options.mode;
-    controller_options.stereo = options.stereo;
-    controller_options.fps = options.fps;
-    controller_options.yaw = options.yaw;
-    controller_options.log = [log](const std::string& line) {
-      log->Write(line);
-    };
-    xr_probe::Controller controller(&runtime, &gpu, controller_options);
-    {
-      std::lock_guard<std::mutex> lock(probe->mutex);
-      probe->controller = &controller;
-      if (probe->stop_asked) controller.RequestStop();
-    }
-    controller.Run();
-    std::lock_guard<std::mutex> lock(probe->mutex);
-    probe->last = controller.StatusNow();
-    probe->controller = nullptr;
-  }
-  log->Write("probe ended");
-  {
-    std::lock_guard<std::mutex> lock(probe->mutex);
-    probe->done = true;
-  }
-  probe->ended.notify_all();
-}
-
-std::shared_ptr<Probe> Current() {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  return g_probe;
+// Made once, never destroyed: no destructor at the DLL's unload, under the
+// loader lock, and never a joinable thread in a static; the plugin's
+// teardown ends or detaches the view before it goes
+xr_probe::SessionCore& Core() {
+  static xr_probe::SessionCore* core = [] {
+    xr_probe::CoreOptions options;
+    options.build = MEDIA_KIT_360_COMMIT;
+    return new xr_probe::SessionCore(MakeParts, options);
+  }();
+  return *core;
 }
 
 }  // namespace
 
-bool Start(const StartOptions& options, FrameSource source,
-           std::string* reason) {
-  std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_probe != nullptr) {
-    std::unique_lock<std::mutex> probe_lock(g_probe->mutex);
-    if (!g_probe->done) {
-      *reason = "a headset view already runs";
-      return false;
-    }
-    probe_lock.unlock();
-    if (g_probe->thread.joinable()) g_probe->thread.join();
-  }
-  auto probe = std::make_shared<Probe>();
-  probe->source = std::make_shared<Source>();
-  probe->source->function = std::move(source);
-  probe->log_path = options.log_path;
-  probe->thread = std::thread(Body, probe, options);
-  g_probe = probe;
-  return true;
-}
-
-bool Stop(int wait_ms) {
-  const auto probe = Current();
-  if (probe == nullptr) {
-    return true;
-  }
+xr_probe::StartAnswer Start(const xr_probe::StartRequest& request,
+                            FrameSource source) {
   {
-    std::lock_guard<std::mutex> lock(probe->source->mutex);
-    probe->source->function = nullptr;
+    std::lock_guard<std::mutex> lock(g_source_mutex);
+    g_source = std::move(source);
   }
-  std::unique_lock<std::mutex> lock(probe->mutex);
-  probe->stop_asked = true;
-  if (probe->controller != nullptr) {
-    probe->controller->RequestStop();
-  }
-  const bool ended = probe->ended.wait_for(
-      lock, std::chrono::milliseconds(wait_ms), [&] { return probe->done; });
-  lock.unlock();
-  if (ended && probe->thread.joinable()) {
-    probe->thread.join();
-  }
-  if (!ended) {
-    std::cout << "media_kit: XR: the probe did not end within " << wait_ms
-              << " ms (the runtime may hang); left to end on its own"
-              << std::endl;
-  }
-  return ended;
+  return Core().Start(request);
 }
 
-void Recenter() {
-  const auto probe = Current();
-  if (probe == nullptr) return;
-  std::lock_guard<std::mutex> lock(probe->mutex);
-  if (probe->controller != nullptr) probe->controller->RequestRecenter();
+bool Stop(int wait_ms) { return Core().Stop(wait_ms); }
+
+void SetContent(const xr_probe::ContentRequest& content) {
+  Core().SetContent(content);
 }
 
-State Now() {
-  State state;
-  const auto probe = Current();
-  if (probe == nullptr) {
-    state.status.phase = "never started";
-    return state;
-  }
-  std::lock_guard<std::mutex> lock(probe->mutex);
-  state.running = !probe->done;
-  state.status = probe->controller != nullptr ? probe->controller->StatusNow()
-                                              : probe->last;
-  state.log_path = probe->log_path;
-  return state;
+void SetContentRate(double fps) { Core().SetContentRate(fps); }
+
+void SetStrip(std::vector<uint8_t> rgba, uint32_t width, uint32_t height,
+              bool visible) {
+  Core().SetStrip(std::move(rgba), width, height, visible);
+}
+
+void Recenter(bool lying_down) { Core().Recenter(lying_down); }
+
+xr_probe::PollAnswer Poll(uint64_t after) { return Core().Poll(after); }
+
+void Teardown(int wait_ms) {
+  Core().Teardown(wait_ms);
+  std::lock_guard<std::mutex> lock(g_source_mutex);
+  g_source = nullptr;
 }
 
 }  // namespace xr_session

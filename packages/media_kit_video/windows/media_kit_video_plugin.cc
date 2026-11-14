@@ -159,6 +159,8 @@ ProjectionSetup ToProjectionSetup(const flutter::EncodableMap& arguments) {
   setup.kind = static_cast<int32_t>(ToInt64(Find(arguments, "kind"), 0));
   CopyFloats(Find(arguments, "eye"), setup.eye, 4);
   CopyFloats(Find(arguments, "crop"), setup.crop, 4);
+  // Immuch360, kind 4 (patch 15)
+  setup.aspect = static_cast<float>(ToDouble(Find(arguments, "aspect"), 0.0));
   setup.tracks = static_cast<int32_t>(ToInt64(Find(arguments, "tracks"), 1));
   CopyFloats(Find(arguments, "streamsEnabled"), setup.enabled, 2);
   if (auto uniforms = Find(arguments, "uniforms")) {
@@ -274,41 +276,170 @@ void MediaKitVideoPlugin::ProcessMainThreadTasks() {
   }
 }
 
+#if MEDIA_KIT_360_XR
+namespace {
+
+// Immuch360, the headset view (IMMUCH360-NOTE.md, patch 15): XrContent of
+// lib/src/xr_headset.dart
+xr_probe::ContentRequest ToXrContent(const flutter::EncodableValue* value) {
+  xr_probe::ContentRequest content;
+  const auto* map =
+      value != nullptr ? std::get_if<flutter::EncodableMap>(value) : nullptr;
+  if (map == nullptr) {
+    return content;
+  }
+  content.handle = ToInt64(Find(*map, "handle"), 0);
+  content.mode = xr_probe::ModeOf(ToString(Find(*map, "mode")));
+  content.stereo = xr_probe::StereoOf(ToString(Find(*map, "stereo")));
+  content.squeeze = xr_probe::SqueezeOf(ToString(Find(*map, "squeeze")));
+  content.fps = ToDouble(Find(*map, "fps"), 0.0);
+  content.yaw = ToDouble(Find(*map, "yaw"), 0.0);
+  content.label = ToString(Find(*map, "label"));
+  return content;
+}
+
+flutter::EncodableMap ToXrState(const xr_probe::PollAnswer& poll) {
+  using flutter::EncodableValue;
+  const auto& status = poll.status;
+  flutter::EncodableList events;
+  for (const auto& event : poll.events) {
+    events.push_back(EncodableValue(flutter::EncodableMap{
+        {EncodableValue("sequence"),
+         EncodableValue(static_cast<int64_t>(event.sequence))},
+        {EncodableValue("kind"),
+         EncodableValue(std::string(xr_probe::EventKindName(event.kind)))},
+        {EncodableValue("seconds"), EncodableValue(event.seconds)},
+        {EncodableValue("on"), EncodableValue(event.on)},
+        {EncodableValue("hand"),
+         EncodableValue(std::string(event.hand == 0 ? "left" : "right"))},
+        {EncodableValue("profile"), EncodableValue(event.profile)},
+        {EncodableValue("time"), EncodableValue(event.time)},
+    }));
+  }
+  return flutter::EncodableMap{
+      {EncodableValue("compiled"), EncodableValue(true)},
+      {EncodableValue("running"), EncodableValue(poll.running)},
+      {EncodableValue("phase"), EncodableValue(status.phase)},
+      {EncodableValue("sessionState"), EncodableValue(status.session_state)},
+      {EncodableValue("visible"), EncodableValue(status.visible)},
+      {EncodableValue("focused"), EncodableValue(status.focused)},
+      {EncodableValue("reason"),
+       EncodableValue(std::string(xr_probe::StopReasonCode(status.reason)))},
+      {EncodableValue("detail"), EncodableValue(status.detail)},
+      {EncodableValue("runtime"), EncodableValue(status.runtime)},
+      {EncodableValue("system"), EncodableValue(status.system)},
+      {EncodableValue("swapchainPath"), EncodableValue(status.swapchain_path)},
+      {EncodableValue("mode"), EncodableValue(status.mode)},
+      {EncodableValue("leftProfile"), EncodableValue(status.profiles[0])},
+      {EncodableValue("rightProfile"), EncodableValue(status.profiles[1])},
+      {EncodableValue("controllers"), EncodableValue(status.controllers)},
+      {EncodableValue("lyingDown"), EncodableValue(status.lying_down)},
+      {EncodableValue("refreshRate"),
+       EncodableValue(static_cast<double>(status.refresh_rate))},
+      {EncodableValue("refreshAsked"),
+       EncodableValue(static_cast<double>(status.refresh_asked))},
+      {EncodableValue("frames"), EncodableValue(status.frames)},
+      {EncodableValue("framesShown"), EncodableValue(status.frames_shown)},
+      {EncodableValue("framesLate"), EncodableValue(status.frames_late)},
+      {EncodableValue("memoryTight"), EncodableValue(status.memory_tight)},
+      {EncodableValue("memoryUsedMb"),
+       EncodableValue(static_cast<int64_t>(status.memory_used_mb))},
+      {EncodableValue("memoryBudgetMb"),
+       EncodableValue(static_cast<int64_t>(status.memory_budget_mb))},
+      {EncodableValue("statsAt"), EncodableValue(status.stats_at)},
+      {EncodableValue("snapshotMs"), EncodableValue(status.snapshot_ms)},
+      {EncodableValue("snapshotMaxMs"), EncodableValue(status.snapshot_max_ms)},
+      {EncodableValue("stripUploads"), EncodableValue(status.strip_uploads)},
+      {EncodableValue("stripShown"), EncodableValue(status.strip_shown)},
+      {EncodableValue("instanceLost"), EncodableValue(status.instance_lost)},
+      {EncodableValue("logPath"), EncodableValue(poll.log_path)},
+      {EncodableValue("lastSequence"),
+       EncodableValue(static_cast<int64_t>(poll.last_sequence))},
+      {EncodableValue("dropped"),
+       EncodableValue(static_cast<int64_t>(poll.dropped))},
+      {EncodableValue("events"), EncodableValue(events)},
+  };
+}
+
+}  // namespace
+#endif
+
 void MediaKitVideoPlugin::HandleXr(
     const std::string& method,
     const flutter::EncodableMap& arguments,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   const auto value = [](auto v) { return flutter::EncodableValue(v); };
+  const auto ok = [&]() {
+    result->Success(flutter::EncodableValue(
+        flutter::EncodableMap{{value("ok"), value(true)}}));
+  };
 #if MEDIA_KIT_360_XR
-  if (method == "VideoOutputManager.XrStart") {
-    xr_session::StartOptions options;
-    const auto mode = ToString(Find(arguments, "mode"));
-    options.mode = mode == "sphere"   ? xr_probe::Mode::kSphere
-                   : mode == "screen" ? xr_probe::Mode::kScreen
-                                      : xr_probe::Mode::kPattern;
-    const auto stereo = ToString(Find(arguments, "stereo"));
-    options.stereo = stereo == "leftRight"   ? xr_probe::ScreenStereo::kLeftRight
-                     : stereo == "topBottom" ? xr_probe::ScreenStereo::kTopBottom
-                                             : xr_probe::ScreenStereo::kMono;
-    options.fps = ToDouble(Find(arguments, "fps"), 0.0);
-    options.yaw = ToDouble(Find(arguments, "yaw"), 0.0);
-    options.log_path = ToString(Find(arguments, "logPath"));
-    options.label = ToString(Find(arguments, "label"));
-    const auto handle = ToInt64(Find(arguments, "handle"), 0);
-    xr_session::FrameSource source;
-    if (handle != 0 && options.mode != xr_probe::Mode::kPattern) {
-      auto* manager = video_output_manager_.get();
-      source = [manager, handle](ProjectionFrameSnapshot* out) {
-        return manager->XrSnapshot(handle, out);
-      };
+  if (method == "VideoOutputManager.XrRuntimeInfo") {
+    // The registry only: no DLL loaded
+    const auto info = xr_session::ActiveRuntime();
+    result->Success(flutter::EncodableValue(flutter::EncodableMap{
+        {value("compiled"), value(true)},
+        {value("registered"), value(info.registered())},
+        {value("source"), value(info.source)},
+        {value("manifestName"), value(info.manifest_name)},
+        {value("exists"), value(info.exists)},
+        {value("runtime"), value(info.runtime)},
+    }));
+  } else if (method == "VideoOutputManager.XrStart") {
+    xr_probe::StartRequest request;
+    request.content = ToXrContent(Find(arguments, "content"));
+    request.log_path = ToString(Find(arguments, "logPath"));
+    request.match_refresh_rate =
+        ToBool(Find(arguments, "matchRefreshRate"), true);
+    request.app_version = ToString(Find(arguments, "appVersion"));
+    if (const auto* names = Find(arguments, "actionNames")) {
+      if (const auto* map = std::get_if<flutter::EncodableMap>(names)) {
+        for (const auto& [key, name] : *map) {
+          if (const auto* text = std::get_if<std::string>(&key)) {
+            request.action_names[*text] = ToString(&name);
+          }
+        }
+      }
     }
-    std::string reason;
-    const bool ok = xr_session::Start(options, std::move(source), &reason);
-    flutter::EncodableMap answer{{value("ok"), value(ok)}};
-    if (!ok) {
-      answer[value("reason")] = value(reason);
+    auto* manager = video_output_manager_.get();
+    const auto answer = xr_session::Start(
+        request, [manager](int64_t handle, ProjectionFrameSnapshot* out) {
+          return manager->XrSnapshot(handle, out);
+        });
+    flutter::EncodableMap reply{{value("ok"), value(answer.ok)}};
+    if (!answer.ok) {
+      reply[value("reason")] =
+          value(std::string(xr_probe::StopReasonCode(answer.reason)));
+      reply[value("detail")] = value(answer.detail);
     }
-    result->Success(flutter::EncodableValue(answer));
+    result->Success(flutter::EncodableValue(reply));
+  } else if (method == "VideoOutputManager.XrSetContent") {
+    xr_session::SetContent(ToXrContent(Find(arguments, "content")));
+    ok();
+  } else if (method == "VideoOutputManager.XrSetContentRate") {
+    xr_session::SetContentRate(ToDouble(Find(arguments, "fps"), 0.0));
+    ok();
+  } else if (method == "VideoOutputManager.XrSetStrip") {
+    std::vector<uint8_t> rgba;
+    if (const auto* bytes = Find(arguments, "rgba")) {
+      if (const auto* list = std::get_if<std::vector<uint8_t>>(bytes)) {
+        rgba = *list;
+      }
+    }
+    const auto width =
+        static_cast<uint32_t>((std::max)(int64_t{0}, ToInt64(Find(arguments, "width"), 0)));
+    const auto height =
+        static_cast<uint32_t>((std::max)(int64_t{0}, ToInt64(Find(arguments, "height"), 0)));
+    xr_session::SetStrip(std::move(rgba), width, height,
+                         ToBool(Find(arguments, "visible"), false));
+    ok();
+  } else if (method == "VideoOutputManager.XrRecenter") {
+    xr_session::Recenter(ToBool(Find(arguments, "lyingDown"), false));
+    ok();
+  } else if (method == "VideoOutputManager.XrPoll") {
+    const auto after = ToInt64(Find(arguments, "after"), 0);
+    result->Success(flutter::EncodableValue(
+        ToXrState(xr_session::Poll(static_cast<uint64_t>((std::max)(int64_t{0}, after))))));
   } else if (method == "VideoOutputManager.XrStop") {
     // The runtime may take a moment to end its session: waited for on a
     // thread, answered on the platform thread
@@ -321,47 +452,34 @@ void MediaKitVideoPlugin::HandleXr(
             {flutter::EncodableValue("ok"), flutter::EncodableValue(ended)}}));
       });
     }).detach();
-  } else if (method == "VideoOutputManager.XrRecenter") {
-    xr_session::Recenter();
-    result->Success(flutter::EncodableValue(std::monostate{}));
-  } else if (method == "VideoOutputManager.XrState") {
-    const auto state = xr_session::Now();
-    result->Success(flutter::EncodableValue(flutter::EncodableMap{
-        {value("compiled"), value(true)},
-        {value("running"), value(state.running)},
-        {value("phase"), value(state.status.phase)},
-        {value("sessionState"), value(state.status.session_state)},
-        {value("reason"), value(state.status.reason)},
-        {value("runtime"), value(state.status.runtime)},
-        {value("system"), value(state.status.system)},
-        {value("swapchainPath"), value(state.status.swapchain_path)},
-        {value("frames"), value(static_cast<int64_t>(state.status.frames))},
-        {value("framesShown"),
-         value(static_cast<int64_t>(state.status.frames_shown))},
-        {value("instanceLost"), value(state.status.instance_lost)},
-        {value("logPath"), value(state.log_path)},
-    }));
   } else {
     result->NotImplemented();
   }
 #else
   (void)arguments;
-  if (method == "VideoOutputManager.XrState") {
+  (void)ok;
+  const auto not_in_build = value(std::string("notInBuild"));
+  const auto detail = value(
+      std::string("this build has no headset view (MEDIA_KIT_360_XR off)"));
+  if (method == "VideoOutputManager.XrPoll") {
     result->Success(flutter::EncodableValue(flutter::EncodableMap{
         {value("compiled"), value(false)},
         {value("running"), value(false)},
         {value("phase"), value(std::string("not in this build"))},
+        {value("reason"), not_in_build},
+        {value("detail"), detail},
     }));
-  } else if (method == "VideoOutputManager.XrStart") {
+  } else if (method == "VideoOutputManager.XrRuntimeInfo") {
     result->Success(flutter::EncodableValue(flutter::EncodableMap{
-        {value("ok"), value(false)},
-        {value("reason"),
-         value(std::string("this build has no headset view (MEDIA_KIT_360_XR "
-                           "off)"))},
+        {value("compiled"), value(false)},
+        {value("registered"), value(false)},
     }));
   } else {
-    result->Success(flutter::EncodableValue(
-        flutter::EncodableMap{{value("ok"), value(true)}}));
+    result->Success(flutter::EncodableValue(flutter::EncodableMap{
+        {value("ok"), value(false)},
+        {value("reason"), not_in_build},
+        {value("detail"), detail},
+    }));
   }
 #endif
 }

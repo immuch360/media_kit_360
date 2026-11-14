@@ -154,9 +154,9 @@ bool VideoOutputManager::XrSnapshot(int64_t handle,
 
 VideoOutputManager::~VideoOutputManager() {
 #if MEDIA_KIT_360_XR
-  // Immuch360: the headset probe ends before the players and the plugin go
-  // (patch 15)
-  xr_session::Stop(2000);
+  // Immuch360: the headset view ends before the players and the plugin go,
+  // or its thread is detached when the runtime does not answer (patch 15)
+  xr_session::Teardown(2000);
 #endif
   std::lock_guard<std::mutex> lock(mutex_);
   {

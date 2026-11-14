@@ -1,4 +1,4 @@
-// Immuch360: the headset probe's GPU side (IMMUCH360-NOTE.md, patch 15); see
+// Immuch360: the headset view's GPU side (IMMUCH360-NOTE.md, patch 15); see
 // the header.
 
 #include "xr_angle_gpu.h"
@@ -6,6 +6,7 @@
 #include <d3d10.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <sstream>
@@ -34,7 +35,7 @@ namespace xr_probe {
 namespace {
 
 // The display the players use (ANGLESurfaceManager's first choice): ANGLE
-// gives the same EGLDisplay for the same attributes, so the probe's context
+// gives the same EGLDisplay for the same attributes, so the view's context
 // can join the players' share group
 constexpr EGLint kDisplayAttributes[] = {
     EGL_PLATFORM_ANGLE_TYPE_ANGLE,
@@ -91,12 +92,34 @@ using DeleteVertexArrays = void(GL_APIENTRY*)(GLsizei, const GLuint*);
 
 }  // namespace
 
-AngleGpu::AngleGpu(Mode mode, ScreenStereo stereo, FrameSource source,
-                   ShareContext share)
-    : mode_(mode),
-      stereo_(stereo),
-      source_(std::move(source)),
-      share_(std::move(share)) {}
+AngleGpu::AngleGpu(FrameSource source, ShareContext share)
+    : source_(std::move(source)), share_(std::move(share)) {}
+
+void AngleGpu::SetContent(const ContentRequest& content) {
+  content_ = content;
+  waiting_logged_ = false;
+}
+
+bool AngleGpu::Snapshot(ProjectionFrameSnapshot* out) {
+  if (!source_ || content_.handle == 0) {
+    return false;
+  }
+  const auto start = std::chrono::steady_clock::now();
+  const bool ok = source_(content_.handle, out);
+  const double ms = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - start)
+                        .count();
+  timing_.count++;
+  timing_.total_ms += ms;
+  timing_.max_ms = (std::max)(timing_.max_ms, ms);
+  return ok;
+}
+
+SnapshotTiming AngleGpu::TakeSnapshotTiming() {
+  const auto out = timing_;
+  timing_ = SnapshotTiming{};
+  return out;
+}
 
 AngleGpu::~AngleGpu() { Close(); }
 
@@ -148,11 +171,13 @@ bool AngleGpu::Open(GpuInfo* info, std::string* error) {
       SUCCEEDED(dxgi_device->GetAdapter(&adapter)) &&
       SUCCEEDED(adapter->GetDesc(&desc))) {
     info->adapter = {desc.AdapterLuid.LowPart, desc.AdapterLuid.HighPart};
+    info->vendor_id = desc.VendorId;
+    info->device_id = desc.DeviceId;
     info->adapter_name = Narrow(desc.Description);
     info->dedicated_video_memory = desc.DedicatedVideoMemory;
     adapter.As(&adapter3_);
   }
-  // The runtime calls into this device from the probe's thread (xrEndFrame,
+  // The runtime calls into this device from the view's thread (xrEndFrame,
   // the swapchain images) while the players draw from theirs: the immediate
   // context must take its own lock (mpv's d3d11va turns it on as well)
   Microsoft::WRL::ComPtr<ID3D10Multithread> multithread;
@@ -171,18 +196,18 @@ bool AngleGpu::Open(GpuInfo* info, std::string* error) {
   context_ = eglCreateContext(display_, config_, share, kContextAttributes);
   info->shares_players = context_ != EGL_NO_CONTEXT && share != EGL_NO_CONTEXT;
   if (context_ == EGL_NO_CONTEXT && share != EGL_NO_CONTEXT) {
-    std::cout << "media_kit: XR: the players' share group refused the probe's "
+    std::cout << "media_kit: XR: the players' share group refused the view's "
                  "context (EGL "
               << Hex(eglGetError()) << ")" << std::endl;
     context_ =
         eglCreateContext(display_, config_, EGL_NO_CONTEXT, kContextAttributes);
   }
   if (context_ == EGL_NO_CONTEXT) {
-    *error = "the probe's ES 3.0 context (EGL " + Hex(eglGetError()) + ")";
+    *error = "the view's ES 3.0 context (EGL " + Hex(eglGetError()) + ")";
     return false;
   }
   if (!eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, context_)) {
-    *error = "the probe's context current (EGL " + Hex(eglGetError()) + ")";
+    *error = "the view's context current (EGL " + Hex(eglGetError()) + ")";
     return false;
   }
   if (!renderer_.Prepare(3)) {
@@ -190,12 +215,13 @@ bool AngleGpu::Open(GpuInfo* info, std::string* error) {
     return false;
   }
   info->gl_renderer = renderer_.gl_renderer();
-  // The passes compiled now, not at the first frame of the headset
-  if (mode_ == Mode::kPattern && !renderer_.PrepareProgram(3)) {
+  // The passes compiled now, not at the first frame of the headset: the
+  // content may change to any mode later
+  if (!renderer_.PrepareProgram(3)) {
     *error = "the test pattern: " + renderer_.error();
     return false;
   }
-  if (mode_ == Mode::kScreen && !PrepareBlit()) {
+  if (!PrepareBlit()) {
     *error = "the screen pass";
     return false;
   }
@@ -396,57 +422,60 @@ void AngleGpu::Present(const Swapchain& swapchain, uint32_t index) {
 }
 
 bool AngleGpu::DrawEye(const Swapchain& swapchain, uint32_t index, int eye,
-                       const XrView& view, double yaw_offset, double time,
+                       const ProjectionView& view, double time,
                        std::string* error) {
   if (!Current(swapchain, index, error)) {
     return false;
   }
-  ProjectionView eye_view;
-  projection_view::EyeView(
-      {view.pose.orientation.x, view.pose.orientation.y,
-       view.pose.orientation.z, view.pose.orientation.w},
-      view.fov.angleLeft, view.fov.angleRight, view.fov.angleUp,
-      view.fov.angleDown, yaw_offset, &eye_view);
-  // The head never rests in a headset: the bilinear filter, the cheap one
-  eye_view.sharp = false;
   const auto width = static_cast<int32_t>(swapchain.width);
   const auto height = static_cast<int32_t>(swapchain.height);
+  const auto clear = [&](float grey) {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, width, height);
+    glDisable(GL_SCISSOR_TEST);
+    glClearColor(grey, grey, grey, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+  };
   bool drawn = false;
-  if (mode_ == Mode::kPattern) {
+  if (content_.mode == Mode::kIdle) {
+    // No player: a dark grey room (the strip, a quad, comes over it)
+    clear(kIdleGrey);
+    drawn = true;
+  } else if (content_.mode == Mode::kPattern) {
     ProjectionSetup setup;
     setup.kind = 3;
-    drawn = renderer_.DrawFrame({}, setup, eye_view, width, height,
+    drawn = renderer_.DrawFrame({}, setup, view, width, height,
                                 {static_cast<float>(eye),
                                  static_cast<float>(time)});
+    if (!drawn) {
+      *error = "renderer C: " + renderer_.error();
+    }
   } else {
     ProjectionFrameSnapshot snapshot;
-    if (source_ && source_(&snapshot) && snapshot.has_frame &&
-        snapshot.setup != nullptr) {
+    if (Snapshot(&snapshot) && snapshot.has_frame && snapshot.setup != nullptr &&
+        snapshot.setup->kind <= 2) {
       auto setup = *snapshot.setup;
       // Each eye its own part of a stereo frame (the window shows one)
-      if (setup.kind == 0 && stereo_ != ScreenStereo::kMono) {
+      if (setup.kind == 0 && content_.stereo != Stereo::kMono) {
         const float left_right[2][4] = {{0, 0, 0.5f, 1}, {0.5f, 0, 0.5f, 1}};
         const float top_bottom[2][4] = {{0, 0, 1, 0.5f}, {0, 0.5f, 1, 0.5f}};
-        const auto* rect = stereo_ == ScreenStereo::kLeftRight
+        const auto* rect = content_.stereo == Stereo::kLeftRight
                                ? left_right[eye]
                                : top_bottom[eye];
         std::copy(rect, rect + 4, setup.eye);
       }
-      drawn = renderer_.DrawFrame(snapshot.frame, setup, eye_view, width,
-                                  height);
+      drawn = renderer_.DrawFrame(snapshot.frame, setup, view, width, height);
       if (!drawn) {
         *error = "renderer C: " + renderer_.error();
       }
     } else {
       if (!waiting_logged_) {
-        std::cout << "media_kit: XR: no frame of the player yet" << std::endl;
+        std::cout << "media_kit: XR: no 360 frame of the player yet"
+                  << std::endl;
         waiting_logged_ = true;
       }
       // Black until the player has a frame: the head tracking shows anyway
-      glBindFramebuffer(GL_FRAMEBUFFER, 0);
-      glViewport(0, 0, width, height);
-      glClearColor(0, 0, 0, 1);
-      glClear(GL_COLOR_BUFFER_BIT);
+      clear(0.0f);
       drawn = true;
     }
   }
@@ -454,42 +483,93 @@ bool AngleGpu::DrawEye(const Swapchain& swapchain, uint32_t index, int eye,
   return drawn;
 }
 
+void AngleGpu::Blit(GLuint texture, int32_t width, int32_t height) {
+  auto bind = reinterpret_cast<BindVertexArray>(
+      eglGetProcAddress("glBindVertexArray"));
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glViewport(0, 0, width, height);
+  glDisable(GL_BLEND);
+  glDisable(GL_SCISSOR_TEST);
+  glUseProgram(blit_program_);
+  if (bind != nullptr) bind(blit_vertex_array_);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glUniform1i(glGetUniformLocation(blit_program_, "uSource"), 0);
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  if (bind != nullptr) bind(0);
+  glUseProgram(0);
+}
+
 bool AngleGpu::DrawScreen(const Swapchain& swapchain, uint32_t index,
                           std::string* error) {
   ProjectionFrameSnapshot snapshot;
-  if (!source_ || !source_(&snapshot) || !snapshot.has_frame) {
+  if (!Snapshot(&snapshot) || !snapshot.has_frame) {
     *error = "no frame";
     return false;
   }
   if (!Current(swapchain, index, error)) {
     return false;
   }
-  auto bind = reinterpret_cast<BindVertexArray>(
-      eglGetProcAddress("glBindVertexArray"));
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  glViewport(0, 0, static_cast<GLsizei>(swapchain.width),
-             static_cast<GLsizei>(swapchain.height));
-  glDisable(GL_BLEND);
-  glDisable(GL_SCISSOR_TEST);
-  glUseProgram(blit_program_);
-  if (bind != nullptr) bind(blit_vertex_array_);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, snapshot.frame.texture);
-  glUniform1i(glGetUniformLocation(blit_program_, "uSource"), 0);
-  glDrawArrays(GL_TRIANGLES, 0, 3);
-  glBindTexture(GL_TEXTURE_2D, 0);
-  if (bind != nullptr) bind(0);
-  glUseProgram(0);
+  Blit(snapshot.frame.texture, static_cast<int32_t>(swapchain.width),
+       static_cast<int32_t>(swapchain.height));
   Present(swapchain, index);
+  return true;
+}
+
+bool AngleGpu::UploadStrip(const Swapchain& swapchain, uint32_t index,
+                           const uint8_t* rgba, uint32_t width, uint32_t height,
+                           std::string* error) {
+  if (width == 0 || height == 0 || width > swapchain.width ||
+      height > swapchain.height) {
+    *error = "strip image of the wrong size";
+    return false;
+  }
+  if (!Current(swapchain, index, error)) {
+    return false;
+  }
+  // Errors of earlier calls are not the upload's
+  for (int i = 0; i < 16 && glGetError() != GL_NO_ERROR; i++) {
+  }
+  // The strip's texture at the image's size, filled with glTexSubImage2D;
+  // the nearest texel, so that the bytes reach the image as they are
+  if (strip_texture_ == 0 || strip_width_ != width || strip_height_ != height) {
+    if (strip_texture_ != 0) glDeleteTextures(1, &strip_texture_);
+    glGenTextures(1, &strip_texture_);
+    glBindTexture(GL_TEXTURE_2D, strip_texture_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(width),
+                 static_cast<GLsizei>(height), 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    strip_width_ = width;
+    strip_height_ = height;
+  }
+  glBindTexture(GL_TEXTURE_2D, strip_texture_);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, static_cast<GLsizei>(width),
+                  static_cast<GLsizei>(height), GL_RGBA, GL_UNSIGNED_BYTE,
+                  rgba);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  Blit(strip_texture_, static_cast<int32_t>(width),
+       static_cast<int32_t>(height));
+  const auto failed = glGetError();
+  Present(swapchain, index);
+  if (failed != GL_NO_ERROR) {
+    *error = "strip upload (GL " + Hex(failed) + ")";
+    return false;
+  }
   return true;
 }
 
 void AngleGpu::Finish() { glFinish(); }
 
-Content AngleGpu::ContentNow() {
-  Content content;
+FrameInfo AngleGpu::FrameNow() {
+  FrameInfo content;
   ProjectionFrameSnapshot snapshot;
-  if (source_ && source_(&snapshot)) {
+  if (Snapshot(&snapshot)) {
     content.has_frame = snapshot.has_frame;
     content.frame_width = snapshot.frame.width;
     content.frame_height = snapshot.frame.height;
@@ -520,6 +600,10 @@ void AngleGpu::Close() {
     for (const auto& [id, wrapped] : wrapped_) ids.push_back(id);
     for (const auto id : ids) UnwrapImages(id);
     renderer_.Release();
+    if (strip_texture_ != 0) {
+      glDeleteTextures(1, &strip_texture_);
+      strip_texture_ = 0;
+    }
     if (blit_program_ != 0) {
       glDeleteProgram(blit_program_);
       blit_program_ = 0;

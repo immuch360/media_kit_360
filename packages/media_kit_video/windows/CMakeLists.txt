@@ -20,7 +20,7 @@ set(ANGLE_SRC "${CMAKE_BINARY_DIR}/ANGLE")
 # Deal with MSVC incompatiblity
 add_compile_definitions(_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR)
 
-# Immuch360: the headset probe (IMMUCH360-NOTE.md, patch 15), OpenXR in the
+# Immuch360: the headset view (IMMUCH360-NOTE.md, patch 15), OpenXR in the
 # plugin, off unless the app asks for it: set(MEDIA_KIT_360_XR ON) in the app's
 # windows/CMakeLists.txt before the plugins are added, or MEDIA_KIT_360_XR=1 in
 # the environment of the build. With it on, the plugin compiles xr_*.cc
@@ -35,7 +35,7 @@ endif()
 set(MEDIA_KIT_360_XR_ON OFF)
 if(MEDIA_KIT_360_XR AND MEDIA_KIT_LIBS_AVAILABLE)
   if(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" OR CMAKE_GENERATOR_PLATFORM STREQUAL "ARM64")
-    message(NOTICE "media_kit: the headset probe is x64 only: off for ARM64")
+    message(NOTICE "media_kit: the headset view is x64 only: off for ARM64")
   else()
     set(MEDIA_KIT_360_XR_ON ON)
   endif()
@@ -65,13 +65,31 @@ if(MEDIA_KIT_360_XR_ON)
   if(NOT EXISTS "${OPENXR_LOADER_DLL}")
     message(FATAL_ERROR "media_kit: the OpenXR loader is not in its package")
   endif()
-  message(STATUS "media_kit: the headset probe is on (OpenXR loader ${OPENXR_LOADER_VERSION})")
+  message(STATUS "media_kit: the headset view is on (OpenXR loader ${OPENXR_LOADER_VERSION})")
   set(MEDIA_KIT_360_XR_SOURCES
     "xr_angle_gpu.cc"
     "xr_controller.cc"
+    "xr_input.cc"
     "xr_openxr_runtime.cc"
+    "xr_runtime_info.cc"
     "xr_session.cc"
+    "xr_session_core.cc"
   )
+  # The plugin's commit for the view's log, when its folder is a git checkout
+  # (pub's git dependencies are); nothing when git is not there
+  set(MEDIA_KIT_360_COMMIT "")
+  find_package(Git QUIET)
+  if(GIT_FOUND)
+    execute_process(
+      COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_CURRENT_SOURCE_DIR}" rev-parse --short=12 HEAD
+      OUTPUT_VARIABLE MEDIA_KIT_360_COMMIT
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET
+      RESULT_VARIABLE MEDIA_KIT_360_COMMIT_RESULT)
+    if(NOT MEDIA_KIT_360_COMMIT_RESULT EQUAL 0)
+      set(MEDIA_KIT_360_COMMIT "")
+    endif()
+  endif()
 endif()
 
 if(MEDIA_KIT_LIBS_AVAILABLE)
@@ -96,12 +114,14 @@ if(MEDIA_KIT_LIBS_AVAILABLE)
   apply_standard_settings(${PLUGIN_NAME})
 
   # Immuch360: the OpenXR headers for every source (xr_probe_core.h is
-  # portable), the probe compiled in only with MEDIA_KIT_360_XR (patch 15)
+  # portable), the headset view compiled in only with MEDIA_KIT_360_XR
+  # (patch 15)
   target_include_directories(${PLUGIN_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openxr/include")
   if(MEDIA_KIT_360_XR_ON)
-    target_compile_definitions(${PLUGIN_NAME} PRIVATE MEDIA_KIT_360_XR=1)
-    target_link_libraries(${PLUGIN_NAME} PRIVATE d3d11 dxgi)
+    target_compile_definitions(${PLUGIN_NAME} PRIVATE MEDIA_KIT_360_XR=1
+      "MEDIA_KIT_360_COMMIT=\"${MEDIA_KIT_360_COMMIT}\"")
+    target_link_libraries(${PLUGIN_NAME} PRIVATE d3d11 dxgi advapi32)
   endif()
 
   set_target_properties(
@@ -164,8 +184,8 @@ else()
   )
 endif()
 
-# Immuch360: the OpenXR loader next to the executable when the probe is on
-# (patch 15)
+# Immuch360: the OpenXR loader next to the executable when the headset view
+# is on (patch 15)
 if(MEDIA_KIT_360_XR_ON)
   set(MEDIA_KIT_VIDEO_BUNDLED "${OPENXR_LOADER_DLL}")
 else()

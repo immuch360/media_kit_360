@@ -271,6 +271,31 @@ void main() {
     });
   });
 
+  test('a flat film (kind 4, IMMUCH360-NOTE.md patch 15): the left eye, the shape it is seen with, code 4', () {
+    final flat = PluginProjection.flat();
+    expect(flat.kind, ProjectionKind.flat);
+    expect(flat.eye, [0.0, 0.0, 1.0, 1.0]);
+    expect(flat.aspect, 0);
+    final halfSbs = PluginProjection.flat(layout: PluginStereoLayout.leftRight, aspect: 16 / 9);
+    expect(halfSbs.eye, [0.0, 0.0, 0.5, 1.0], reason: 'the left eye of a side by side film');
+    expect(halfSbs.aspect, 16 / 9);
+    expect(PluginProjection.flat(layout: PluginStereoLayout.topBottom).eye, [0.0, 0.0, 1.0, 0.5]);
+    final arguments = ProjectionSetup(
+      kind: halfSbs.kind,
+      eye: halfSbs.eye,
+      aspect: halfSbs.aspect,
+      maxFrameWidth: 4096,
+      maxFramePixels: 4096 * 2160,
+      outputWidth: 1920,
+      outputHeight: 1080,
+      maxOutputHeight: 1440,
+    ).toArguments(7);
+    expect(arguments['kind'], 4, reason: 'code 3 is the test pattern of the headset view');
+    expect(arguments['aspect'], 16 / 9);
+    expect(arguments['eye'], [0.0, 0.0, 0.5, 1.0]);
+    expect([for (final kind in ProjectionKind.values) kind.code], [0, 1, 2, 4]);
+  });
+
   test('a dedicated GPU starts at the full size, an integrated or unknown one at 2880', () {
     expect(PluginTier.startFor(_nvidia), PluginTier.full);
     expect(PluginTier.startFor('ANGLE (AMD, AMD Radeon RX 7600 Direct3D11 vs_5_0 ps_5_0, D3D11)'), PluginTier.full);

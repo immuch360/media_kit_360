@@ -4,8 +4,8 @@
 // in this order: kFragmentHeader, "#define PROJECTION_KIND <n>",
 // kFragmentCommon, kFragmentStreams for the two stitches only, the part of the
 // projection (kFragmentEquirect, kFragmentFisheye or kFragmentEac, or
-// kFragmentPattern for the test pattern of the headset probe, kind 3),
-// kFragmentMain. The vertex program is the same for all. The Windows test of
+// kFragmentPattern for the test pattern of the headset view, kind 3, or
+// kFragmentFlat for a flat film, kind 4), kFragmentMain. The vertex program is the same for all. The Windows test of
 // the app compiles exactly these strings with the ANGLE of the build
 // (mobile/test/desktop/video/plugin_shaders_windows_test.dart reads this
 // file), so a source that ANGLE refuses fails there before it reaches a
@@ -383,8 +383,40 @@ vec3 samplePattern(vec3 d) {
 }
 )glsl";
 
+// PROJECTION_KIND 4, Immuch360: a flat film drawn as it is, letterboxed into
+// the output with black bars (IMMUCH360-NOTE.md, patch 15): the window keeps
+// its normal picture while the headset view reads the frame. A stereo film
+// shows one eye (uEye, the left one), at the shape it is seen with (uAspect:
+// a half side by side film's eye is squeezed in the frame).
+constexpr const char* kFragmentFlat = R"glsl(
+// The picture in the frame: x, y, width, height, fractions, top left origin
+uniform vec4 uEye;
+// The picture's shape as seen, width / height
+uniform float uAspect;
+
+vec3 sampleFlat(vec2 position) {
+  // The first row of the output (position.y = -1) is the top of the picture
+  vec2 t = position * 0.5 + 0.5;
+  float outputAspect = uOutputSize.x / max(uOutputSize.y, 1.0);
+  float aspect = max(uAspect, 1e-3);
+  vec2 local = t;
+  if (aspect > outputAspect) {
+    local.y = (t.y - 0.5) * aspect / outputAspect + 0.5;
+  } else {
+    local.x = (t.x - 0.5) * outputAspect / aspect + 0.5;
+  }
+  if (local.x < 0.0 || local.x > 1.0 || local.y < 0.0 || local.y > 1.0) {
+    return vec3(0.0);
+  }
+  return sampleFrame(uEye.xy + local * uEye.zw);
+}
+)glsl";
+
 constexpr const char* kFragmentMain = R"glsl(
 vec3 sampleView(vec2 position) {
+#if PROJECTION_KIND == 4
+  return sampleFlat(position);
+#else
   // The first row of the output (position.y = -1) is the top of the view
   vec2 t = position * 0.5 + 0.5;
   vec3 ray = vec3(mix(uTanFov.x, uTanFov.y, t.x), mix(uTanFov.z, uTanFov.w, t.y), 1.0);
@@ -400,6 +432,7 @@ vec3 sampleView(vec2 position) {
     v = uCorrection * v;
   }
   return stitch(v);
+#endif
 #endif
 }
 
