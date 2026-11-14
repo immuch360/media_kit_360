@@ -8,10 +8,16 @@
 #include "media_kit_video_plugin.h"
 #include "utils.h"
 
+#if MEDIA_KIT_360_XR
+#include "xr_session.h"
+#endif
+
 #include <Windows.h>
 
 #include <algorithm>
 #include <memory>
+#include <string>
+#include <thread>
 
 namespace media_kit_video {
 
@@ -63,6 +69,16 @@ double ToDouble(const flutter::EncodableValue* value, double fallback) {
     return static_cast<double>(*v);
   }
   return fallback;
+}
+
+std::string ToString(const flutter::EncodableValue* value) {
+  if (value == nullptr) {
+    return "";
+  }
+  if (auto v = std::get_if<std::string>(value)) {
+    return *v;
+  }
+  return "";
 }
 
 bool ToBool(const flutter::EncodableValue* value, bool fallback) {
@@ -256,6 +272,98 @@ void MediaKitVideoPlugin::ProcessMainThreadTasks() {
     } catch (...) {
     }
   }
+}
+
+void MediaKitVideoPlugin::HandleXr(
+    const std::string& method,
+    const flutter::EncodableMap& arguments,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto value = [](auto v) { return flutter::EncodableValue(v); };
+#if MEDIA_KIT_360_XR
+  if (method == "VideoOutputManager.XrStart") {
+    xr_session::StartOptions options;
+    const auto mode = ToString(Find(arguments, "mode"));
+    options.mode = mode == "sphere"   ? xr_probe::Mode::kSphere
+                   : mode == "screen" ? xr_probe::Mode::kScreen
+                                      : xr_probe::Mode::kPattern;
+    const auto stereo = ToString(Find(arguments, "stereo"));
+    options.stereo = stereo == "leftRight"   ? xr_probe::ScreenStereo::kLeftRight
+                     : stereo == "topBottom" ? xr_probe::ScreenStereo::kTopBottom
+                                             : xr_probe::ScreenStereo::kMono;
+    options.fps = ToDouble(Find(arguments, "fps"), 0.0);
+    options.yaw = ToDouble(Find(arguments, "yaw"), 0.0);
+    options.log_path = ToString(Find(arguments, "logPath"));
+    options.label = ToString(Find(arguments, "label"));
+    const auto handle = ToInt64(Find(arguments, "handle"), 0);
+    xr_session::FrameSource source;
+    if (handle != 0 && options.mode != xr_probe::Mode::kPattern) {
+      auto* manager = video_output_manager_.get();
+      source = [manager, handle](ProjectionFrameSnapshot* out) {
+        return manager->XrSnapshot(handle, out);
+      };
+    }
+    std::string reason;
+    const bool ok = xr_session::Start(options, std::move(source), &reason);
+    flutter::EncodableMap answer{{value("ok"), value(ok)}};
+    if (!ok) {
+      answer[value("reason")] = value(reason);
+    }
+    result->Success(flutter::EncodableValue(answer));
+  } else if (method == "VideoOutputManager.XrStop") {
+    // The runtime may take a moment to end its session: waited for on a
+    // thread, answered on the platform thread
+    std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> reply =
+        std::move(result);
+    std::thread([this, reply]() {
+      const bool ended = xr_session::Stop();
+      RunOnMainThread([reply, ended]() {
+        reply->Success(flutter::EncodableValue(flutter::EncodableMap{
+            {flutter::EncodableValue("ok"), flutter::EncodableValue(ended)}}));
+      });
+    }).detach();
+  } else if (method == "VideoOutputManager.XrRecenter") {
+    xr_session::Recenter();
+    result->Success(flutter::EncodableValue(std::monostate{}));
+  } else if (method == "VideoOutputManager.XrState") {
+    const auto state = xr_session::Now();
+    result->Success(flutter::EncodableValue(flutter::EncodableMap{
+        {value("compiled"), value(true)},
+        {value("running"), value(state.running)},
+        {value("phase"), value(state.status.phase)},
+        {value("sessionState"), value(state.status.session_state)},
+        {value("reason"), value(state.status.reason)},
+        {value("runtime"), value(state.status.runtime)},
+        {value("system"), value(state.status.system)},
+        {value("swapchainPath"), value(state.status.swapchain_path)},
+        {value("frames"), value(static_cast<int64_t>(state.status.frames))},
+        {value("framesShown"),
+         value(static_cast<int64_t>(state.status.frames_shown))},
+        {value("instanceLost"), value(state.status.instance_lost)},
+        {value("logPath"), value(state.log_path)},
+    }));
+  } else {
+    result->NotImplemented();
+  }
+#else
+  (void)arguments;
+  if (method == "VideoOutputManager.XrState") {
+    result->Success(flutter::EncodableValue(flutter::EncodableMap{
+        {value("compiled"), value(false)},
+        {value("running"), value(false)},
+        {value("phase"), value(std::string("not in this build"))},
+    }));
+  } else if (method == "VideoOutputManager.XrStart") {
+    result->Success(flutter::EncodableValue(flutter::EncodableMap{
+        {value("ok"), value(false)},
+        {value("reason"),
+         value(std::string("this build has no headset view (MEDIA_KIT_360_XR "
+                           "off)"))},
+    }));
+  } else {
+    result->Success(flutter::EncodableValue(
+        flutter::EncodableMap{{value("ok"), value(true)}}));
+  }
+#endif
 }
 
 void MediaKitVideoPlugin::HandleMethodCall(
@@ -456,6 +564,15 @@ void MediaKitVideoPlugin::HandleMethodCall(
     } else {
       result->Success(flutter::EncodableValue(std::monostate{}));
     }
+  } else if (method_call.method_name().rfind("VideoOutputManager.Xr", 0) ==
+             0) {
+    // Immuch360: the headset probe (IMMUCH360-NOTE.md, patch 15), only in a
+    // build with the MEDIA_KIT_360_XR option of CMake
+    const auto* arguments =
+        std::get_if<flutter::EncodableMap>(method_call.arguments());
+    const flutter::EncodableMap empty;
+    HandleXr(method_call.method_name(), arguments ? *arguments : empty,
+             std::move(result));
   } else if (method_call.method_name().compare("Utils.EnterNativeFullscreen") ==
              0) {
     auto window =

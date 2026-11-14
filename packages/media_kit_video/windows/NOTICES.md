@@ -16,6 +16,13 @@ in each package); Immuch360 itself is AGPL-3.0 (`LICENSE` at the root of the rep
 | `libEGL.dll`, `libGLESv2.dll` | ANGLE, OpenGL ES over Direct3D 11 | BSD-3-Clause |
 | `vk_swiftshader.dll`, `vulkan-1.dll` | SwiftShader and the Vulkan loader, shipped with that ANGLE build | Apache-2.0 |
 | `d3dcompiler_47.dll` | Microsoft's HLSL compiler, used by ANGLE | Microsoft, redistributable file of the Windows SDK |
+| `openxr_loader.dll` (only in a build with `MEDIA_KIT_360_XR`) | the Khronos OpenXR loader, opened by the headset view only | Apache-2.0 OR MIT |
+
+The OpenXR loader comes from `OpenXR.Loader.1.1.65.nupkg` of the release `release-1.1.65` of
+`KhronosGroup/OpenXR-SDK` (SHA-256 `05638c526f07ba3a5f1084bbc3308d654d5167f844ffa1e35515325cb72e0c34`, the digest
+GitHub lists for the asset), its `native/x64/release/bin/openxr_loader.dll`; the package declares the licence
+expression `Apache-2.0 OR MIT`, and the headers vendored in `windows/third_party/openxr/include/openxr` carry
+`SPDX-License-Identifier: Apache-2.0 OR MIT`. The text of `licenses/Apache-2.0.txt` covers it.
 
 The ANGLE files come from `ANGLE.7z` v1.0.1 of `alexmercerind/flutter-windows-ANGLE-OpenGL-ES` (SHA-256
 `cc5911bb15d596fd5a2b362613ad35b7093b427117269a7359054a65746a5f9a`), built for x64 only.

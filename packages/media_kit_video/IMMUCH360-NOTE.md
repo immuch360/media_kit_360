@@ -285,6 +285,28 @@ Patches:
    takes the table out of the player before it may go to another video. The equirectangular pass is unchanged: a
    stitched file has no table.
 
+15. Windows, the headset probe: OpenXR in the plugin, off unless built with the `MEDIA_KIT_360_XR` option of CMake
+   (`windows/xr_*.h` and `.cc`, `windows/projection_view.h`, `lib/xr.dart`; Immuch360 store/m2/release-48/xr-probe.md).
+   Renderer C's view takes four tangents (`uTanFov`, left, right, up and down, signed as OpenXR's `XrFovf`) in place of
+   the symmetric `uTanHalfFov`, and a rotation built from an eye's orientation (`ProjectionView.eye`, `rows`,
+   `tangents`; `projection_view::EyeView`: OpenXR's view space has -z ahead, renderer C's +z, so the eye sees the
+   sphere through S R S, S = diag(1, 1, -1), then the recentering's turn about y); the window's view gives the same
+   uniforms as before. `ProjectionRenderer::DrawFrame` draws from another renderer's intermediate texture of the share
+   group; kind 3 is a test pattern drawn with no frame (`kFragmentPattern`: a grey ramp ahead, one coloured patch per
+   eye, a bar moving at a stepped time, green up, orange down). With the option on: the Khronos loader
+   (`openxr_loader.dll` 1.1.65 of the `OpenXR.Loader` package, Apache 2.0 OR MIT, SHA-256 checked) is bundled next to
+   the executable and opened from there at the first start only; the vendored headers (`windows/third_party/openxr`,
+   Apache 2.0 OR MIT) serve every build. `VideoOutputManager.XrStart` (handle, mode "sphere", "screen" or "pattern",
+   stereo, fps, yaw, logPath, label), `XrStop`, `XrRecenter` and `XrState` run one probe at a time on a thread of its
+   own (`xr_session.cc`): the D3D11 device of the plugin's ANGLE display (`EGL_EXT_device_query`) with multithread
+   protection, its adapter LUID compared with `xrGetD3D11GraphicsRequirementsKHR`'s, an ES 3.0 context in the players'
+   share group, an sRGB swapchain per eye written through a linear view (`EGL_D3D_TEXTURE_ANGLE` pbuffers, "direct"),
+   or a UNORM texture copied into the image ("copy"), the session's states (begun once ready, ended once stopping,
+   left once exiting or lost, `XR_ERROR_INSTANCE_LOST` handled), `XR_FB_display_refresh_rate` asked for a multiple of
+   the content's rate, a flat screen on quad layers (one per eye for 3D). Every step goes to the log file given. The
+   player's frame is published after its draw is finished on the GPU (`VideoOutput::XrSnapshot`). Not in the probe:
+   the raw files of two players, the stabilisation in the headset, controllers, subtitles, audio routing.
+
 Not done yet (plan 20-plan-desktop.md, 2.2): the D3D11 device on the adapter Flutter uses. It is not needed on a
 laptop with two GPUs: Flutter's ANGLE, the plugin's device and display and mpv's decoder all take the adapter DXGI
 lists first, which Windows' graphics preference for the app and the runner's NvOptimusEnablement and

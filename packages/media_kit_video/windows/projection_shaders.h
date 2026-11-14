@@ -3,7 +3,8 @@
 // One fragment program per projection, put together by |ProjectionRenderer|
 // in this order: kFragmentHeader, "#define PROJECTION_KIND <n>",
 // kFragmentCommon, kFragmentStreams for the two stitches only, the part of the
-// projection (kFragmentEquirect, kFragmentFisheye or kFragmentEac),
+// projection (kFragmentEquirect, kFragmentFisheye or kFragmentEac, or
+// kFragmentPattern for the test pattern of the headset probe, kind 3),
 // kFragmentMain. The vertex program is the same for all. The Windows test of
 // the app compiles exactly these strings with the ANGLE of the build
 // (mobile/test/desktop/video/plugin_shaders_windows_test.dart reads this
@@ -50,8 +51,10 @@ precision highp int;
 uniform sampler2D uSource;
 // A ray of the view (x right, y up, z ahead) to the frame of the sphere
 uniform mat3 uViewToSphere;
-// tan of half the horizontal and of half the vertical field of view
-uniform vec2 uTanHalfFov;
+// The field of view: tan of its left, right, up and down angles, signed as
+// OpenXR's XrFovf (left and down negative). The window's view is symmetric;
+// an eye of a headset is not (IMMUCH360-NOTE.md, patch 15)
+uniform vec4 uTanFov;
 // 1 while the view rests (the sharper filter), 0 while it moves (bilinear)
 uniform float uSharp;
 // Size of the output in pixels
@@ -336,13 +339,60 @@ vec3 stitch(vec3 v) {
 }
 )glsl";
 
+// PROJECTION_KIND 3, Immuch360: the test pattern of the headset probe
+// (IMMUCH360-NOTE.md, patch 15), drawn from the direction alone, no frame. On
+// a dark sphere with a line every 15 degrees (the horizon and the meridian
+// ahead brighter): ahead on the horizon a ramp of 16 grey steps of 6 degrees,
+// 0 to 255 from left to right as written (the gamma check: even steps, the
+// middle ones mid grey); above it a red patch for the left eye only, on the
+// left, and a blue one for the right eye only, on the right (each eye shows
+// its own picture); under it a white bar that crosses 90 degrees in 4 s at the
+// rate uPattern.y steps (the judder check); a green cap above 75 degrees up,
+// an orange one below 75 degrees down; a checker behind.
+constexpr const char* kFragmentPattern = R"glsl(
+// x: 0 the left eye, 1 the right eye, 0.5 both; y: the time of the bar, in
+// seconds, stepped at the rate imitated
+uniform vec2 uPattern;
+
+vec3 samplePattern(vec3 d) {
+  float lon = degrees(atan(d.x, d.z));
+  float lat = degrees(asin(clamp(d.y, -1.0, 1.0)));
+  if (lat > 75.0) return vec3(0.1, 0.7, 0.2);
+  if (lat < -75.0) return vec3(0.9, 0.45, 0.05);
+  if (abs(lon) > 150.0) {
+    float c = mod(floor(lon / 10.0) + floor(lat / 10.0), 2.0);
+    return vec3(0.15 + 0.5 * c);
+  }
+  if (abs(lat) < 6.0 && lon >= -48.0 && lon < 48.0) {
+    float level = floor((lon + 48.0) / 6.0);
+    return vec3(level / 15.0);
+  }
+  if (lat >= 10.0 && lat <= 22.0) {
+    if (uPattern.x < 0.75 && lon >= -30.0 && lon <= -18.0) return vec3(1.0, 0.0, 0.0);
+    if (uPattern.x > 0.25 && lon >= 18.0 && lon <= 30.0) return vec3(0.0, 0.0, 1.0);
+  }
+  if (lat >= -22.0 && lat <= -10.0) {
+    float at = -45.0 + 90.0 * fract(uPattern.y / 4.0);
+    if (abs(lon - at) < 1.5) return vec3(1.0);
+  }
+  float gridLon = abs(mod(lon + 7.5, 15.0) - 7.5);
+  float gridLat = abs(mod(lat + 7.5, 15.0) - 7.5);
+  if (abs(lat) < 0.4 || abs(lon) < 0.4) return vec3(0.7);
+  if (gridLon < 0.25 || gridLat < 0.25) return vec3(0.35);
+  return vec3(0.08);
+}
+)glsl";
+
 constexpr const char* kFragmentMain = R"glsl(
 vec3 sampleView(vec2 position) {
-  // The first row of the output is the top of the view
-  vec3 ray = vec3(position.x * uTanHalfFov.x, -position.y * uTanHalfFov.y, 1.0);
+  // The first row of the output (position.y = -1) is the top of the view
+  vec2 t = position * 0.5 + 0.5;
+  vec3 ray = vec3(mix(uTanFov.x, uTanFov.y, t.x), mix(uTanFov.z, uTanFov.w, t.y), 1.0);
   vec3 d = normalize(uViewToSphere * ray);
 #if PROJECTION_KIND == 0
   return sampleSphere(d);
+#elif PROJECTION_KIND == 3
+  return samplePattern(d);
 #else
   // The stitches take y down: (cos lat sin lon, -sin lat, cos lat cos lon)
   vec3 v = vec3(d.x, -d.y, d.z);

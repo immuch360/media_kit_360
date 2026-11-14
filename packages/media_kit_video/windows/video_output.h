@@ -143,6 +143,12 @@ class VideoOutput {
       bool enabled,
       std::optional<std::shared_ptr<const stabilization::Table>> table);
 
+  // Immuch360: what renderer C drew last, for the headset probe (patch 15),
+  // from any thread: the intermediate texture, whether it holds a frame of
+  // the current setup, how many frames it drew, and the setup. False while
+  // renderer C is off for this player.
+  bool XrSnapshot(ProjectionFrameSnapshot* out);
+
  private:
   // Immuch360: the setup of renderer C, null when it is off.
   std::shared_ptr<const ProjectionSetup> CurrentProjection();
@@ -288,6 +294,11 @@ class VideoOutput {
     double frame_time = -1.0;
   };
   ProjectionCounters projection_counters_;
+  // Immuch360: the frame of renderer C for the headset probe (patch 15),
+  // under |projection_mutex_|; set once a draw finished on the GPU
+  ProjectionFrame xr_frame_;
+  bool xr_has_frame_ = false;
+  uint64_t xr_frame_count_ = 0;
 
   // Immuch360, the stabilisation (patch 14): the setting and the table under
   // |projection_mutex_|; the clock, the frame period and the time of the

@@ -51,14 +51,16 @@ Map<String, String> _shaderSources() {
   };
 }
 
-/// The fragment program of [kind] (0 equirectangular, 1 fisheye pair, 2 EAC pair), in ProjectionRenderer::Program's
-/// order
+/// The fragment program of [kind] (0 equirectangular, 1 fisheye pair, 2 EAC pair, 3 the test pattern of the headset
+/// probe), in ProjectionRenderer::Program's order
 String _fragment(Map<String, String> sources, int kind) => [
   sources['kFragmentHeader']!,
   '#define PROJECTION_KIND $kind\n',
   sources['kFragmentCommon']!,
   if (kind == 0)
     sources['kFragmentEquirect']!
+  else if (kind == 3)
+    sources['kFragmentPattern']!
   else ...[
     sources['kFragmentStreams']!,
     kind == 1 ? sources['kFragmentFisheye']! : sources['kFragmentEac']!,
@@ -364,11 +366,11 @@ void main() {
 
   tearDownAll(arena.releaseAll);
 
-  test('the three passes compile and link in OpenGL ES 3.0', () {
+  test('the three passes and the test pattern compile and link in OpenGL ES 3.0', () {
     final sources = _shaderSources();
     expect(sources.keys, containsAll(['kVertexSource', 'kFragmentCommon', 'kFragmentEquirect', 'kFragmentMain']));
     final vertex = gl.compile(_glVertexShader, sources['kVertexSource']!);
-    for (final kind in [0, 1, 2]) {
+    for (final kind in [0, 1, 2, 3]) {
       final program = gl.link(vertex, gl.compile(_glFragmentShader, _fragment(sources, kind)));
       expect(program, greaterThan(0), reason: 'projection $kind');
     }
@@ -414,10 +416,13 @@ void main() {
 
     final matrix = arena<Float>(9);
     // Draws the view and reads the pixel of the output at (x, row), row 0 being the first row of the output
+    // [tangents]: the four tangents of an eye of a headset (left, right, up, down, signed as XrFovf; patch 15), in
+    // place of the symmetric ones of [fov]
     (int, int, int) draw({
       required double yaw,
       required double pitch,
       double fov = 60,
+      List<double>? tangents,
       List<double> crop = const [0, 0, 1, 1],
       int x = size ~/ 2,
       int row = size ~/ 2,
@@ -432,10 +437,11 @@ void main() {
         matrix[i] = rows[(i % 3) * 3 + i ~/ 3];
       }
       final tanHalf = math.tan(fov * math.pi / 360);
+      final t = tangents ?? [-tanHalf, tanHalf, tanHalf, -tanHalf];
       gl
         ..uniform1i(gl.location(program, 'uSource'), 0)
         ..uniformMatrix3fv(gl.location(program, 'uViewToSphere'), 1, 0, matrix)
-        ..uniform2f(gl.location(program, 'uTanHalfFov'), tanHalf, tanHalf)
+        ..uniform4f(gl.location(program, 'uTanFov'), t[0], t[1], t[2], t[3])
         ..uniform1f(gl.location(program, 'uSharp'), 0)
         ..uniform2f(gl.location(program, 'uOutputSize'), size.toDouble(), size.toDouble())
         ..uniform1f(gl.location(program, 'uTexelsPerPixel'), 1)
@@ -472,6 +478,68 @@ void main() {
     // VR180: the front half only, black behind
     expect(draw(yaw: 0, pitch: 45, crop: const [0.25, 0, 0.5, 1]), isNot(black));
     expect(draw(yaw: 180, pitch: 45, crop: const [0.25, 0, 0.5, 1]), black);
+    // An eye of a headset (patch 15): its field of view is asymmetric. Left 0 and right 4: the left edge looks
+    // ahead (the green quarter) and the centre at atan(2), 63 degrees to the right (out of it)
+    expect(draw(yaw: 0, pitch: 10, tangents: const [0, 4, 0.5, -0.5], x: 1), yellow, reason: 'the left edge, ahead');
+    expect(draw(yaw: 0, pitch: 10, tangents: const [0, 4, 0.5, -0.5]), red, reason: 'the centre, 63 degrees right');
+    // Up 1 and down 0, looking behind: the whole view is above the horizon, its last row too
+    expect(draw(yaw: 180, pitch: 0, tangents: const [-0.5, 0.5, 1, 0], row: size - 3), red, reason: 'above the horizon');
+    expect(draw(yaw: 180, pitch: 0, tangents: const [-0.5, 0.5, 0, -1], row: 2), blue, reason: 'below the horizon');
+  }, skip: skip);
+
+  test('the test pattern of the headset probe: the grey ramp ahead, one patch per eye (patch 15)', () {
+    final sources = _shaderSources();
+    final program = gl.link(
+      gl.compile(_glVertexShader, sources['kVertexSource']!),
+      gl.compile(_glFragmentShader, _fragment(sources, 3)),
+    );
+    expect(program, greaterThan(0));
+    final vertexArray = arena<Uint32>();
+    gl
+      ..genVertexArrays(1, vertexArray)
+      ..bindVertexArray(vertexArray.value)
+      ..useProgram(program)
+      ..viewport(0, 0, size, size);
+    final matrix = arena<Float>(9);
+    // The centre of a view looking at (yaw, pitch), for the eye given
+    (int, int, int) draw({required double yaw, required double pitch, required double eye, double time = 0}) {
+      final cy = math.cos(yaw * math.pi / 180);
+      final sy = math.sin(yaw * math.pi / 180);
+      final cp = math.cos(pitch * math.pi / 180);
+      final sp = math.sin(pitch * math.pi / 180);
+      final rows = [cy, -sy * sp, sy * cp, 0.0, cp, sp, -sy, -cy * sp, cy * cp];
+      for (var i = 0; i < 9; i++) {
+        matrix[i] = rows[(i % 3) * 3 + i ~/ 3];
+      }
+      const t = 0.01;
+      gl
+        ..uniformMatrix3fv(gl.location(program, 'uViewToSphere'), 1, 0, matrix)
+        ..uniform4f(gl.location(program, 'uTanFov'), -t, t, t, -t)
+        ..uniform1f(gl.location(program, 'uSharp'), 0)
+        ..uniform2f(gl.location(program, 'uOutputSize'), size.toDouble(), size.toDouble())
+        ..uniform1f(gl.location(program, 'uTexelsPerPixel'), 0)
+        ..uniform2f(gl.location(program, 'uPattern'), eye, time)
+        ..drawArrays(_glTriangles, 0, 3)
+        ..finish();
+      final out = arena<Uint8>(4);
+      gl.readPixels(size ~/ 2, size ~/ 2, 1, 1, _glRgba, _glUnsignedByte, out);
+      expect(gl.getError(), 0);
+      return (out[0], out[1], out[2]);
+    }
+
+    // The ramp: step k of 16 (6 degrees each from 48 degrees left) is k / 15 as written, no gamma applied
+    for (final (lon, level) in [(-45.0, 0), (-3.0, 7), (3.0, 8), (45.0, 15)]) {
+      final value = (level * 255 / 15).round();
+      final (r, g, b) = draw(yaw: lon, pitch: 0, eye: 0.5);
+      expect((r - value).abs() <= 1 && g == r && b == r, isTrue, reason: 'step $level at $lon: ($r, $g, $b)');
+    }
+    expect(draw(yaw: -24, pitch: 16, eye: 0), (255, 0, 0), reason: 'the red patch, left eye');
+    expect(draw(yaw: 24, pitch: 16, eye: 0), isNot((0, 0, 255)), reason: 'no blue patch in the left eye');
+    expect(draw(yaw: 24, pitch: 16, eye: 1), (0, 0, 255), reason: 'the blue patch, right eye');
+    expect(draw(yaw: -24, pitch: 16, eye: 1), isNot((255, 0, 0)), reason: 'no red patch in the right eye');
+    expect(draw(yaw: -45, pitch: -16, eye: 0.5, time: 0), (255, 255, 255), reason: 'the bar at its start');
+    expect(draw(yaw: 0, pitch: -16, eye: 0.5, time: 2), (255, 255, 255), reason: 'the bar half way after 2 s');
+    expect(draw(yaw: 0, pitch: 80, eye: 0.5).$2, greaterThan(150), reason: 'green up');
   }, skip: skip);
 
   test('the fisheye pass reads the second lens from the texture of the second player (IMMUCH360-NOTE.md, patch 7)', () {
@@ -534,7 +602,7 @@ void main() {
         ..uniform1i(at('uSource'), 0)
         ..uniform1i(at('uSource1'), 1)
         ..uniformMatrix3fv(at('uViewToSphere'), 1, 0, view)
-        ..uniform2f(at('uTanHalfFov'), tanHalf, tanHalf)
+        ..uniform4f(at('uTanFov'), -tanHalf, tanHalf, tanHalf, -tanHalf)
         ..uniform1f(at('uSharp'), 0)
         ..uniform2f(at('uOutputSize'), size.toDouble(), size.toDouble())
         ..uniform1f(at('uTexelsPerPixel'), 1)
@@ -675,7 +743,7 @@ void main() {
         ..uniform1i(at('uSource'), 0)
         ..uniform1i(at('uSource1'), 1)
         ..uniformMatrix3fv(at('uViewToSphere'), 1, 0, matrix([for (var i = 0; i < 9; i++) rows[(i % 3) * 3 + i ~/ 3]]))
-        ..uniform2f(at('uTanHalfFov'), tanHalf, tanHalf)
+        ..uniform4f(at('uTanFov'), -tanHalf, tanHalf, tanHalf, -tanHalf)
         ..uniform1f(at('uSharp'), 0)
         ..uniform2f(at('uOutputSize'), size.toDouble(), size.toDouble())
         ..uniform1f(at('uTexelsPerPixel'), 1)

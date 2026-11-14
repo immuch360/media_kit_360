@@ -198,7 +198,7 @@ GLuint ProjectionRenderer::Compile(GLenum type, const std::string& source) {
 }
 
 GLuint ProjectionRenderer::Program(int32_t kind) {
-  if (kind < 0 || kind > 2) {
+  if (kind < 0 || kind > 3) {
     error_ = "unknown projection " + std::to_string(kind);
     return 0;
   }
@@ -218,6 +218,8 @@ GLuint ProjectionRenderer::Program(int32_t kind) {
   source += projection_shaders::kFragmentCommon;
   if (kind == 0) {
     source += projection_shaders::kFragmentEquirect;
+  } else if (kind == 3) {
+    source += projection_shaders::kFragmentPattern;
   } else {
     source += projection_shaders::kFragmentStreams;
     source += kind == 1 ? projection_shaders::kFragmentFisheye
@@ -252,6 +254,8 @@ GLuint ProjectionRenderer::Program(int32_t kind) {
 void ProjectionRenderer::SetUniforms(GLuint program,
                                      const ProjectionSetup& setup,
                                      const ProjectionView& view,
+                                     const ProjectionFrame& frame,
+                                     const ProjectionPattern& pattern,
                                      int32_t width,
                                      int32_t height,
                                      bool second,
@@ -260,45 +264,34 @@ void ProjectionRenderer::SetUniforms(GLuint program,
     return glGetUniformLocation(program, name);
   };
   glUniform1i(location("uSource"), 0);
-  // A ray of the view to the sphere: pitched up about x, then turned about
-  // y (the yaw to the right), so that the centre of the view looks at
-  // longitude |yaw| and latitude |pitch|, as the photo sphere does
-  const auto yaw = view.yaw * kPi / 180.0;
-  const auto pitch = std::clamp(view.pitch, -90.0f, 90.0f) * kPi / 180.0;
-  const auto cy = std::cos(yaw), sy = std::sin(yaw);
-  const auto cp = std::cos(pitch), sp = std::sin(pitch);
-  // Rows of Ry(yaw) * Rx(pitch)
-  const double rows[9] = {
-      cy, -sy * sp, sy * cp,  //
-      0,  cp,       sp,       //
-      -sy, -cy * sp, cy * cp,
-  };
-  GLfloat columns[9];
-  for (int i = 0; i < 9; i++) {
-    columns[i] = static_cast<GLfloat>(rows[(i % 3) * 3 + i / 3]);
-  }
-  glUniformMatrix3fv(location("uViewToSphere"), 1, GL_FALSE, columns);
-  const auto fov = std::clamp(view.fov, 1.0f, 170.0f) * kPi / 180.0;
-  const auto tan_half = std::tan(fov / 2.0);
-  const auto aspect = static_cast<double>(width) / std::max(1, height);
-  glUniform2f(location("uTanHalfFov"), static_cast<GLfloat>(tan_half * aspect),
-              static_cast<GLfloat>(tan_half));
+  // A ray of the view to the sphere: for the window pitched up about x, then
+  // turned about y (the yaw to the right), so that the centre of the view
+  // looks at longitude |yaw| and latitude |pitch|, as the photo sphere does;
+  // for an eye of a headset its own rotation and four tangents (patch 15,
+  // projection_view.h)
+  const auto uniforms = projection_view::UniformsOf(view, width, height);
+  glUniformMatrix3fv(location("uViewToSphere"), 1, GL_FALSE, uniforms.columns);
+  glUniform4fv(location("uTanFov"), 1, uniforms.tangents);
   glUniform1f(location("uSharp"), view.sharp ? 1.0f : 0.0f);
   glUniform2f(location("uOutputSize"), static_cast<GLfloat>(width),
               static_cast<GLfloat>(height));
-  const auto pixels_per_radian = (height / 2.0) / tan_half;
+  const auto pixels_per_radian = uniforms.pixels_per_radian;
   // Two lenses side by side in the frame, or one in it and the other in the
   // second texture of the same size: the same texels per radian
-  auto texels_per_radian = frame_width_ * (second ? 2.0 : 1.0) / (2.0 * kPi);
+  auto texels_per_radian = frame.width * (second ? 2.0 : 1.0) / (2.0 * kPi);
   if (setup.kind == 0) {
     texels_per_radian =
-        frame_width_ * setup.eye[2] / (2.0 * kPi * std::max(0.01f, setup.crop[2]));
+        frame.width * setup.eye[2] / (2.0 * kPi * std::max(0.01f, setup.crop[2]));
   }
   glUniform1f(location("uTexelsPerPixel"),
               static_cast<GLfloat>(texels_per_radian / pixels_per_radian));
   if (setup.kind == 0) {
     glUniform4fv(location("uEye"), 1, setup.eye);
     glUniform4fv(location("uCrop"), 1, setup.crop);
+    return;
+  }
+  if (setup.kind == 3) {
+    glUniform2f(location("uPattern"), pattern.eye, pattern.time);
     return;
   }
   glUniform1f(location("uTracks"),
@@ -354,7 +347,24 @@ bool ProjectionRenderer::DrawView(const ProjectionSetup& setup,
                                   int32_t height,
                                   GLuint second_texture,
                                   const float* correction) {
-  if (!prepared_ || frame_texture_ == 0 || !has_frame_) {
+  if (!has_frame_) {
+    return false;
+  }
+  return DrawFrame({frame_texture_, frame_width_, frame_height_}, setup, view,
+                   width, height, ProjectionPattern{}, second_texture,
+                   correction);
+}
+
+bool ProjectionRenderer::DrawFrame(const ProjectionFrame& frame,
+                                   const ProjectionSetup& setup,
+                                   const ProjectionView& view,
+                                   int32_t width,
+                                   int32_t height,
+                                   const ProjectionPattern& pattern,
+                                   GLuint second_texture,
+                                   const float* correction) {
+  const bool pattern_only = setup.kind == 3;
+  if (!prepared_ || (!pattern_only && frame.texture == 0)) {
     return false;
   }
   const auto program = Program(setup.kind);
@@ -379,9 +389,10 @@ bool ProjectionRenderer::DrawView(const ProjectionSetup& setup,
     bind_sampler_(1, 0);
   }
   glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, frame_texture_);
+  glBindTexture(GL_TEXTURE_2D, pattern_only ? 0 : frame.texture);
   bind_sampler_(0, 0);
-  SetUniforms(program, setup, view, width, height, second, correction);
+  SetUniforms(program, setup, view, frame, pattern, width, height, second,
+              correction);
   glDrawArrays(GL_TRIANGLES, 0, 3);
   // The defaults mpv expects at its next render (render_gl.h, "OpenGL state")
   if (second) {

@@ -106,6 +106,11 @@ class ANGLESurfaceManager {
   // of its own (the frame of the second lens).
   void MakeContextCurrent();
 
+  // Immuch360: a context of |display| and |client_version| that a context of
+  // another thread may share with (the headset probe, IMMUCH360-NOTE.md patch
+  // 15), EGL_NO_CONTEXT when no player has one. Safe from any thread.
+  static EGLContext ShareContextFor(EGLDisplay display, int32_t client_version);
+
  private:
   // Immuch360: the second internal texture and its pbuffer (patch 6).
   bool CreateBack();

@@ -23,13 +23,17 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
+
+#include "projection_view.h"
 
 // What a player shows through renderer C, as Dart gives it
 // (lib/src/projection_output.dart).
 struct ProjectionSetup {
-  // 0 an equirectangular frame, 1 a fisheye pair, 2 a GoPro EAC pair
+  // 0 an equirectangular frame, 1 a fisheye pair, 2 a GoPro EAC pair; 3 the
+  // test pattern of the headset probe, which reads no frame (patch 15)
   int32_t kind = 0;
   // Equirectangular: the eye shown, in fractions of the frame (x, y, width,
   // height, top left origin), and the part of the sphere it covers
@@ -66,14 +70,35 @@ struct ProjectionSetup {
   bool SameFrameLayout(const ProjectionSetup& other) const;
 };
 
-// The view: yaw and pitch in degrees (yaw positive to the right of the
-// frame's centre, pitch positive up), the vertical field of view in degrees,
-// and whether it rests (the sharper filter) or moves (bilinear).
-struct ProjectionView {
-  float yaw = 0.0f;
-  float pitch = 0.0f;
-  float fov = 90.0f;
-  bool sharp = true;
+// The view (|ProjectionView|) and its uniforms are in projection_view.h, with
+// no OpenGL header, for the tests (patch 15).
+
+// Immuch360, a frame of another renderer of the share group, drawn by this
+// one (the eyes of a headset, patch 15): its texture and its size.
+struct ProjectionFrame {
+  GLuint texture = 0;
+  int32_t width = 0;
+  int32_t height = 0;
+};
+
+// Immuch360: what a player's renderer drew last, for the headset probe on its
+// own thread (patch 15): its intermediate texture (readable from any context
+// of the share group), whether it holds a frame and how many it drew, and the
+// setup it draws through. Taken under the player's lock.
+struct ProjectionFrameSnapshot {
+  ProjectionFrame frame;
+  bool has_frame = false;
+  uint64_t count = 0;
+  std::shared_ptr<const ProjectionSetup> setup;
+};
+
+// Immuch360: the test pattern of the headset probe (patch 15), drawn without a
+// frame as PROJECTION_KIND 3: which eye it is for (0 left, 1 right, 0.5 both)
+// and the time of the moving bar, in seconds, already stepped at the rate the
+// probe imitates.
+struct ProjectionPattern {
+  float eye = 0.5f;
+  float time = 0.0f;
 };
 
 class ProjectionRenderer {
@@ -122,6 +147,19 @@ class ProjectionRenderer {
                 GLuint second_texture = 0,
                 const float* correction = nullptr);
 
+  // Immuch360, the eyes of a headset (patch 15): |DrawView| from |frame|, the
+  // intermediate texture of the player's renderer (same share group), rather
+  // than from this renderer's own. |setup.kind| 3 draws the test pattern of
+  // |pattern| and needs no frame.
+  bool DrawFrame(const ProjectionFrame& frame,
+                 const ProjectionSetup& setup,
+                 const ProjectionView& view,
+                 int32_t width,
+                 int32_t height,
+                 const ProjectionPattern& pattern = ProjectionPattern{},
+                 GLuint second_texture = 0,
+                 const float* correction = nullptr);
+
   // Reads five pixels of the output just drawn: the centre, then the middle
   // of the top, bottom, left and right edges (an eighth inside), as 0xAABBGGRR.
   void ReadProbe(int32_t width, int32_t height, uint32_t out[5]);
@@ -138,6 +176,8 @@ class ProjectionRenderer {
   void SetUniforms(GLuint program,
                    const ProjectionSetup& setup,
                    const ProjectionView& view,
+                   const ProjectionFrame& frame,
+                   const ProjectionPattern& pattern,
                    int32_t width,
                    int32_t height,
                    bool second,
@@ -159,8 +199,9 @@ class ProjectionRenderer {
   bool prepared_ = false;
   GLuint vertex_array_ = 0;
   GLuint vertex_shader_ = 0;
-  GLuint programs_[3] = {0, 0, 0};
-  bool program_failed_[3] = {false, false, false};
+  // Immuch360: the three projections and the test pattern (patch 15)
+  GLuint programs_[4] = {0, 0, 0, 0};
+  bool program_failed_[4] = {false, false, false, false};
   GLuint frame_texture_ = 0;
   GLuint frame_fbo_ = 0;
   int32_t frame_width_ = 0;

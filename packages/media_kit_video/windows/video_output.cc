@@ -874,6 +874,13 @@ void VideoOutput::DrawProjection(const ProjectionSetup& setup) {
     counters.frame_width = projection_renderer_->frame_width();
     counters.frame_height = projection_renderer_->frame_height();
     counters.error = projection_renderer_->error();
+    // Immuch360, the headset probe (patch 15): the frame is finished on the
+    // GPU (glFinish above), so another context may read it from now on
+    xr_frame_ = {projection_renderer_->frame_texture(),
+                 projection_renderer_->frame_width(),
+                 projection_renderer_->frame_height()};
+    xr_has_frame_ = projection_renderer_->has_frame();
+    xr_frame_count_ += drew_frame ? 1 : 0;
     if (read) {
       std::copy(pixels, pixels + 5, counters.probe);
       counters.probe_ready = true;
@@ -921,6 +928,8 @@ flutter::EncodableMap VideoOutput::SetProjection(
       {
         std::lock_guard<std::mutex> lock(projection_mutex_);
         projection_ = nullptr;
+        xr_frame_ = {};
+        xr_has_frame_ = false;
       }
       if (projection_renderer_ != nullptr) {
         surface_manager_->MakeCurrent(true);
@@ -1020,6 +1029,18 @@ flutter::EncodableMap VideoOutput::SetProjection(
   });
   future.wait();
   return result;
+}
+
+bool VideoOutput::XrSnapshot(ProjectionFrameSnapshot* out) {
+  std::lock_guard<std::mutex> lock(projection_mutex_);
+  if (projection_ == nullptr || destroyed_) {
+    return false;
+  }
+  out->frame = xr_frame_;
+  out->has_frame = xr_has_frame_ && xr_frame_.texture != 0;
+  out->count = xr_frame_count_;
+  out->setup = projection_;
+  return true;
 }
 
 void VideoOutput::SetView(const ProjectionView& view) {

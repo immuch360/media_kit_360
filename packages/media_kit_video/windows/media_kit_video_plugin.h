@@ -37,6 +37,12 @@ class MediaKitVideoPlugin : public flutter::Plugin {
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
 
+  // Immuch360: the calls of the headset probe (IMMUCH360-NOTE.md, patch 15)
+  void HandleXr(
+      const std::string& method,
+      const flutter::EncodableMap& arguments,
+      std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
+
   void RunOnMainThread(std::function<void()> task);
   static LRESULT CALLBACK WindowProcDelegate(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
   void ProcessMainThreadTasks();

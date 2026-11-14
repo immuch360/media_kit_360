@@ -482,3 +482,16 @@ bool ANGLESurfaceManager::CreateContext(int32_t client_version) {
   }
   return true;
 }
+
+EGLContext ANGLESurfaceManager::ShareContextFor(EGLDisplay display,
+                                                int32_t client_version) {
+  std::lock_guard<std::mutex> lock(share_mutex_);
+  for (auto* member : share_members_) {
+    if (member->display_ == display &&
+        member->client_version_ == client_version &&
+        member->context_ != EGL_NO_CONTEXT) {
+      return member->context_;
+    }
+  }
+  return EGL_NO_CONTEXT;
+}

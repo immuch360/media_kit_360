@@ -58,6 +58,16 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -I.. stabilization_test.cc -o "$RUNNER_TEMP/stabilization_test"
           "$RUNNER_TEMP/stabilization_test"
 
+      # The headset probe (windows/xr_*.h and .cc, IMMUCH360-NOTE.md patch 15) without a headset: the eye's view and
+      # its four tangents, the adapter check, the swapchain format and the refresh rate chosen, the session's states
+      # with a fake runtime (begun, ended when the headset is taken off, begun again, a lost instance)
+      - name: Headset probe tests
+        working-directory: packages/media_kit_video/windows/test
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -I.. -I../third_party/openxr/include xr_probe_test.cc ../xr_controller.cc \
+            -o "$RUNNER_TEMP/xr_probe_test"
+          "$RUNNER_TEMP/xr_probe_test"
+
   linux:
     name: Linux build of the example
     runs-on: ubuntu-latest
@@ -154,6 +164,75 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: media_kit_360-example-windows-x64
+          path: example/build/windows/x64/runner/Release
+          retention-days: 14
+          if-no-files-found: error
+
+  # The headset probe (IMMUCH360-NOTE.md, patch 15) built in: the example with MEDIA_KIT_360_XR on, the OpenXR loader
+  # downloaded, checked and bundled, the probe's tests built by MSVC with the plugin's warnings and run where the
+  # build is. GitHub's runners have no GPU and no OpenXR runtime: this proves the build, the link, the loader, the
+  # ANGLE device and the swapchain images; what a headset shows waits for one (store/m2/release-48/xr-probe.md)
+  windows-xr:
+    name: Windows build with the headset probe
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Build with MEDIA_KIT_360_XR
+        working-directory: example
+        env:
+          MEDIA_KIT_360_XR: '1'
+        run: |
+          flutter pub get
+          flutter build windows --release
+
+      - name: The OpenXR loader bundled
+        working-directory: example/build/windows/x64/runner/Release
+        run: |
+          for file in openxr_loader.dll libmpv-2.dll libEGL.dll libGLESv2.dll media_kit_360_example.exe; do
+            test -f "$file" || { echo "::error::$file is missing from the build"; exit 1; }
+          done
+          sha256sum openxr_loader.dll
+
+      # The portable tests with MSVC and the Windows ones (the bundled loader with no runtime, the ANGLE device and
+      # its LUID, the swapchain images and the values they hold), from the build's folder
+      - name: The probe's tests built by MSVC
+        run: |
+          cmake -S packages/media_kit_video/windows/test/xr -B "$RUNNER_TEMP/xr-tests" -A x64 \
+            -DMEDIA_KIT_360_ANGLE="$GITHUB_WORKSPACE/example/build/windows/x64/ANGLE"
+          cmake --build "$RUNNER_TEMP/xr-tests" --config Release
+
+      - name: The probe's tests
+        working-directory: example/build/windows/x64/runner/Release
+        run: |
+          "$RUNNER_TEMP/xr-tests/Release/xr_probe_test.exe"
+          cp "$RUNNER_TEMP/xr-tests/Release/xr_windows_test.exe" .
+          ./xr_windows_test.exe
+          rm xr_windows_test.exe
+
+      - name: The passes of renderer C in ANGLE
+        working-directory: packages/media_kit_video
+        env:
+          MEDIA_KIT_360_BUILD_DIR: ${{ github.workspace }}\example\build\windows\x64\runner\Release
+        run: flutter test test/sphere/plugin_shaders_windows_test.dart
+
+      - name: Upload the build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: media_kit_360-example-windows-x64-xr
           path: example/build/windows/x64/runner/Release
           retention-days: 14
           if-no-files-found: error

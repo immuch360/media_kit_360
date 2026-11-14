@@ -73,6 +73,12 @@ class VideoOutputManager {
                   int64_t partner,
                   std::function<void(flutter::EncodableMap)> done);
 
+  // Immuch360: |VideoOutput::XrSnapshot| of the player |handle|, for the
+  // headset probe's thread (IMMUCH360-NOTE.md, patch 15); false once the
+  // player is gone. The output cannot go while it runs: it is taken out of
+  // the lookup, under the same lock, before it is destroyed.
+  bool XrSnapshot(int64_t handle, ProjectionFrameSnapshot* out);
+
   ~VideoOutputManager();
 
  private:

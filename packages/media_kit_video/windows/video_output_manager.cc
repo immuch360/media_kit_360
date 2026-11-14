@@ -8,6 +8,10 @@
 
 #include "video_output_manager.h"
 
+#if MEDIA_KIT_360_XR
+#include "xr_session.h"
+#endif
+
 VideoOutputManager::VideoOutputManager(
     flutter::PluginRegistrarWindows* registrar)
     : registrar_(registrar) {}
@@ -138,7 +142,22 @@ void VideoOutputManager::SetPartner(
   }).detach();
 }
 
+bool VideoOutputManager::XrSnapshot(int64_t handle,
+                                    ProjectionFrameSnapshot* out) {
+  std::lock_guard<std::mutex> lookup_lock(lookup_mutex_);
+  auto output = lookup_.find(handle);
+  if (output == lookup_.end()) {
+    return false;
+  }
+  return output->second->XrSnapshot(out);
+}
+
 VideoOutputManager::~VideoOutputManager() {
+#if MEDIA_KIT_360_XR
+  // Immuch360: the headset probe ends before the players and the plugin go
+  // (patch 15)
+  xr_session::Stop(2000);
+#endif
   std::lock_guard<std::mutex> lock(mutex_);
   {
     std::lock_guard<std::mutex> lookup_lock(lookup_mutex_);
