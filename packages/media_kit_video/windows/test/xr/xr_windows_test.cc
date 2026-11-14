@@ -318,12 +318,12 @@ void TestStrip() {
         "strip: 1024 x 160 bytes read back unchanged, the first row on top (" +
             std::to_string(differ) + " differ)");
   // A smaller image lands in the top left corner
-  const auto small = made(600, 100);
-  Check(gpu.UploadStrip(swapchain, 2, small.data(), 600, 100, &error),
+  const auto part = made(600, 100);
+  Check(gpu.UploadStrip(swapchain, 2, part.data(), 600, 100, &error),
         "strip: a smaller image " + error);
   gpu.Finish();
   const auto corner = Bytes(device, textures[2].Get(), false, 600, 100);
-  Check(corner == small, "strip: the smaller image in the top left corner");
+  Check(corner == part, "strip: the smaller image in the top left corner");
   Check(!gpu.UploadStrip(swapchain, 0, full.data(), 2048, 160, &error),
         "strip: a too wide image refused");
   gpu.UnwrapImages(swapchain.id);

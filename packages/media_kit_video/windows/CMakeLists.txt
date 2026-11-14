@@ -75,8 +75,9 @@ if(MEDIA_KIT_360_XR_ON)
     "xr_session.cc"
     "xr_session_core.cc"
   )
-  # The plugin's commit for the view's log, when its folder is a git checkout
-  # (pub's git dependencies are); nothing when git is not there
+  # The plugin's commit for the view's log, when its folder is a git checkout,
+  # else "unknown" (the app's log tells the commit it pinned). Hexadecimal
+  # only, given bare (xr_session.cc makes it a string: no quotes to escape)
   set(MEDIA_KIT_360_COMMIT "")
   find_package(Git QUIET)
   if(GIT_FOUND)
@@ -86,9 +87,12 @@ if(MEDIA_KIT_360_XR_ON)
       OUTPUT_STRIP_TRAILING_WHITESPACE
       ERROR_QUIET
       RESULT_VARIABLE MEDIA_KIT_360_COMMIT_RESULT)
-    if(NOT MEDIA_KIT_360_COMMIT_RESULT EQUAL 0)
+    if(NOT MEDIA_KIT_360_COMMIT_RESULT EQUAL 0 OR NOT MEDIA_KIT_360_COMMIT MATCHES "^[0-9a-f]+$")
       set(MEDIA_KIT_360_COMMIT "")
     endif()
+  endif()
+  if(MEDIA_KIT_360_COMMIT STREQUAL "")
+    set(MEDIA_KIT_360_COMMIT "unknown")
   endif()
 endif()
 
@@ -120,7 +124,7 @@ if(MEDIA_KIT_LIBS_AVAILABLE)
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openxr/include")
   if(MEDIA_KIT_360_XR_ON)
     target_compile_definitions(${PLUGIN_NAME} PRIVATE MEDIA_KIT_360_XR=1
-      "MEDIA_KIT_360_COMMIT=\"${MEDIA_KIT_360_COMMIT}\"")
+      "MEDIA_KIT_360_COMMIT=${MEDIA_KIT_360_COMMIT}")
     target_link_libraries(${PLUGIN_NAME} PRIVATE d3d11 dxgi advapi32)
   endif()
 

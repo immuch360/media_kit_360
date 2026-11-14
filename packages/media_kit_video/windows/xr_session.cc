@@ -19,10 +19,13 @@
 #include "xr_angle_gpu.h"
 #include "xr_openxr_runtime.h"
 
-// The plugin's commit, when CMake could read it (windows/CMakeLists.txt)
+// The plugin's commit, when CMake could read it (windows/CMakeLists.txt),
+// given bare and made a string here
 #ifndef MEDIA_KIT_360_COMMIT
-#define MEDIA_KIT_360_COMMIT ""
+#define MEDIA_KIT_360_COMMIT unknown
 #endif
+#define MEDIA_KIT_360_TEXT2(x) #x
+#define MEDIA_KIT_360_TEXT(x) MEDIA_KIT_360_TEXT2(x)
 
 namespace xr_session {
 
@@ -126,7 +129,7 @@ xr_probe::ViewParts MakeParts(const xr_probe::StartRequest& request,
 xr_probe::SessionCore& Core() {
   static xr_probe::SessionCore* core = [] {
     xr_probe::CoreOptions options;
-    options.build = MEDIA_KIT_360_COMMIT;
+    options.build = MEDIA_KIT_360_TEXT(MEDIA_KIT_360_COMMIT);
     return new xr_probe::SessionCore(MakeParts, options);
   }();
   return *core;
