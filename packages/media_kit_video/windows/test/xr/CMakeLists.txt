@@ -44,7 +44,9 @@ add_executable(xr_windows_test
 target_include_directories(xr_windows_test PRIVATE
   "${PLUGIN}" "${PLUGIN}/third_party/openxr/include"
   "${MEDIA_KIT_360_ANGLE}/include")
-target_compile_definitions(xr_windows_test PRIVATE MEDIA_KIT_360_XR=1)
+# UNICODE as in the app's build (Flutter's runner sets it for every plugin): utils.cc
+# passes wide strings to the Windows calls of the TCHAR kind
+target_compile_definitions(xr_windows_test PRIVATE MEDIA_KIT_360_XR=1 UNICODE _UNICODE)
 target_compile_options(xr_windows_test PRIVATE /W4 /WX /wd4100)
 target_link_libraries(xr_windows_test PRIVATE
   "${MEDIA_KIT_360_ANGLE}/lib/libEGL.dll.lib"
