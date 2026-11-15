@@ -364,11 +364,14 @@ void OpenXrRuntime::DestroySwapchain(uint64_t id) {
   }
 }
 
-bool OpenXrRuntime::PollEvent(Event* event) {
+XrResult OpenXrRuntime::PollEvent(Event* event) {
   auto buffer = Typed<XrEventDataBuffer>(XR_TYPE_EVENT_DATA_BUFFER);
-  if (instance_ == XR_NULL_HANDLE ||
-      poll_event_(instance_, &buffer) != XR_SUCCESS) {
-    return false;
+  if (instance_ == XR_NULL_HANDLE) {
+    return XR_EVENT_UNAVAILABLE;
+  }
+  const auto polled = poll_event_(instance_, &buffer);
+  if (polled != XR_SUCCESS) {
+    return polled;
   }
   *event = Event{};
   switch (buffer.type) {
@@ -409,7 +412,7 @@ bool OpenXrRuntime::PollEvent(Event* event) {
       event->other = buffer.type;
       break;
   }
-  return true;
+  return XR_SUCCESS;
 }
 
 XrResult OpenXrRuntime::BeginSession() {

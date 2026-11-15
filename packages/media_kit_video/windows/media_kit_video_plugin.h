@@ -12,6 +12,7 @@
 #include <flutter/plugin_registrar_windows.h>
 #include <Windows.h>
 #include <functional>
+#include <memory>
 #include <queue>
 #include <mutex>
 
@@ -32,6 +33,15 @@ class MediaKitVideoPlugin : public flutter::Plugin {
 
  private:
   static constexpr UINT kMainThreadTaskMessage = WM_USER + 1001;
+
+  // Immuch360: what a detached thread holds in place of |this| (XrStop waits
+  // up to 4 s for the runtime, and the app may close its window before):
+  // |plugin| is set to nullptr under |mutex| first thing in the destructor, so
+  // a late thread never reaches a plugin or a member already gone (patch 15)
+  struct Alive {
+    std::mutex mutex;
+    MediaKitVideoPlugin* plugin = nullptr;
+  };
 
   void HandleMethodCall(
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
@@ -55,6 +65,7 @@ class MediaKitVideoPlugin : public flutter::Plugin {
   WNDPROC original_window_proc_ = nullptr;
   std::queue<std::function<void()>> main_thread_tasks_;
   std::mutex main_thread_tasks_mutex_;
+  std::shared_ptr<Alive> alive_ = std::make_shared<Alive>();
   static MediaKitVideoPlugin* instance_;
 };
 

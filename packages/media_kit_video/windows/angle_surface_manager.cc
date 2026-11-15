@@ -27,6 +27,7 @@ int ANGLESurfaceManager::instance_count_ = 0;
 std::mutex ANGLESurfaceManager::share_mutex_;
 std::vector<ANGLESurfaceManager*> ANGLESurfaceManager::share_members_;
 int64_t ANGLESurfaceManager::last_share_group_ = 0;
+int32_t ANGLESurfaceManager::display_users_ = 0;
 
 ANGLESurfaceManager::ANGLESurfaceManager(int32_t width, int32_t height)
     : width_(width), height_(height) {
@@ -39,6 +40,7 @@ ANGLESurfaceManager::ANGLESurfaceManager(int32_t width, int32_t height)
     LeaveShareGroup();
     throw;
   }
+  std::lock_guard<std::mutex> lock(share_mutex_);
   instance_count_++;
 }
 
@@ -46,6 +48,7 @@ ANGLESurfaceManager::~ANGLESurfaceManager() {
   CleanUp(true);
   ::ReleaseMutex(mutex_);
   ::CloseHandle(mutex_);
+  std::lock_guard<std::mutex> lock(share_mutex_);
   instance_count_--;
 }
 
@@ -241,8 +244,16 @@ void ANGLESurfaceManager::CleanUp(bool release_context) {
       eglDestroySurface(display_, surface_);
       surface_ = EGL_NO_SURFACE;
     }
-    if (instance_count_ == 1) {
-      eglTerminate(display_);
+    {
+      // Immuch360: never under the headset view (patch 15); the decrement of
+      // |instance_count_| comes after, so the view's last |ReleaseDisplay|
+      // may see this manager still counted: it then leaves the display
+      // initialized, never terminated twice
+      std::lock_guard<std::mutex> lock(share_mutex_);
+      if (instance_count_ == 1 && display_users_ == 0 &&
+          display_ != EGL_NO_DISPLAY) {
+        eglTerminate(display_);
+      }
     }
     display_ = EGL_NO_DISPLAY;
     // Release D3D device & context if the instance is being destroyed.
@@ -494,4 +505,22 @@ EGLContext ANGLESurfaceManager::ShareContextFor(EGLDisplay display,
     }
   }
   return EGL_NO_CONTEXT;
+}
+
+void ANGLESurfaceManager::RetainDisplay(EGLDisplay display) {
+  if (display == EGL_NO_DISPLAY) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(share_mutex_);
+  display_users_++;
+}
+
+void ANGLESurfaceManager::ReleaseDisplay(EGLDisplay display) {
+  if (display == EGL_NO_DISPLAY) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(share_mutex_);
+  if (display_users_ > 0 && --display_users_ == 0 && instance_count_ == 0) {
+    eglTerminate(display);
+  }
 }

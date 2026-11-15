@@ -202,6 +202,7 @@ MediaKitVideoPlugin::MediaKitVideoPlugin(
     flutter::PluginRegistrarWindows* registrar)
     : registrar_(registrar),
       video_output_manager_(std::make_unique<VideoOutputManager>(registrar)) {
+  alive_->plugin = this;
   instance_ = this;
   flutter_window_ =
       ::GetAncestor(registrar->GetView()->GetNativeWindow(), GA_ROOT);
@@ -218,6 +219,14 @@ MediaKitVideoPlugin::MediaKitVideoPlugin(
 }
 
 MediaKitVideoPlugin::~MediaKitVideoPlugin() {
+  // Immuch360: no detached thread reaches this plugin from now on, then the
+  // headset view's teardown (VideoOutputManager's destructor, up to 2 s)
+  // runs while every member still exists (patch 15)
+  {
+    std::lock_guard<std::mutex> lock(alive_->mutex);
+    alive_->plugin = nullptr;
+  }
+  video_output_manager_.reset();
   if (flutter_window_ && original_window_proc_) {
     ::SetWindowLongPtr(flutter_window_, GWLP_WNDPROC,
                        reinterpret_cast<LONG_PTR>(original_window_proc_));
@@ -442,12 +451,18 @@ void MediaKitVideoPlugin::HandleXr(
         ToXrState(xr_session::Poll(static_cast<uint64_t>((std::max)(int64_t{0}, after))))));
   } else if (method == "VideoOutputManager.XrStop") {
     // The runtime may take a moment to end its session: waited for on a
-    // thread, answered on the platform thread
+    // thread, answered on the platform thread. The thread holds |alive_|,
+    // never |this|: when the plugin went meanwhile (the window closed), the
+    // answer is dropped
     std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> reply =
         std::move(result);
-    std::thread([this, reply]() {
+    std::thread([alive = alive_, reply]() {
       const bool ended = xr_session::Stop();
-      RunOnMainThread([reply, ended]() {
+      std::lock_guard<std::mutex> lock(alive->mutex);
+      if (alive->plugin == nullptr) {
+        return;
+      }
+      alive->plugin->RunOnMainThread([reply, ended]() {
         reply->Success(flutter::EncodableValue(flutter::EncodableMap{
             {flutter::EncodableValue("ok"), flutter::EncodableValue(ended)}}));
       });

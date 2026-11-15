@@ -134,6 +134,10 @@ class FakeRuntime : public xr_probe::Runtime {
   // Once the script is over, EXITING after this many empty rounds (-1:
   // never)
   int exit_after_empty = 300;
+  // Once the script is over, what every xrPollEvent returns in place of
+  // XR_EVENT_UNAVAILABLE (XR_ERROR_INSTANCE_LOST: the runtime quit while no
+  // frame call was made); XR_SUCCESS: none
+  XrResult poll_error = XR_SUCCESS;
   // Per frame index: what xrWaitFrame returns (XR_SUCCESS by default)
   std::vector<std::pair<int, XrResult>> wait_results;
   // xrWaitFrame of this index blocks until |blocker| is released
@@ -238,15 +242,19 @@ class FakeRuntime : public xr_probe::Runtime {
     Record("DestroySwapchain");
     journal->Add("-swapchain " + std::to_string(id));
   }
-  // One round of polls (until it returns false) takes the next entry of the
-  // script; once the script is over, EXITING after a while, as a runtime that
-  // closes
-  bool PollEvent(xr_probe::Event* event) override {
+  // One round of polls (until it returns XR_EVENT_UNAVAILABLE) takes the next
+  // entry of the script; once the script is over, EXITING after a while, as a
+  // runtime that closes, or |poll_error|
+  XrResult PollEvent(xr_probe::Event* event) override {
     if (!round_open) {
       round_open = true;
       if (!script.empty()) {
         pending.assign(script.front().begin(), script.front().end());
         script.pop_front();
+      } else if (poll_error != XR_SUCCESS) {
+        round_open = false;
+        Record("PollEvent error");
+        return poll_error;
       } else if (exit_after_empty >= 0 &&
                  ++polls_without_events > exit_after_empty) {
         polls_without_events = 0;
@@ -255,11 +263,11 @@ class FakeRuntime : public xr_probe::Runtime {
     }
     if (pending.empty()) {
       round_open = false;
-      return false;
+      return XR_EVENT_UNAVAILABLE;
     }
     *event = pending.front();
     pending.pop_front();
-    return true;
+    return XR_SUCCESS;
   }
   XrResult BeginSession() override {
     Record("BeginSession");

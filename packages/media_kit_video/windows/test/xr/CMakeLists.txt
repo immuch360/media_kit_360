@@ -4,7 +4,9 @@
 # - xr_probe_test and xr_v1_test: the portable tests (test/xr_probe_test.cc,
 #   test/xr_v1_test.cc), also run by g++ on Linux;
 # - xr_windows_test: the loader, the registry, the ANGLE device, the
-#   swapchain images and the strip on the hosted runner (xr_windows_test.cc).
+#   swapchain images, the strip and the display held by the view while the
+#   last player goes (a real ANGLESurfaceManager) on the hosted runner
+#   (xr_windows_test.cc).
 # MEDIA_KIT_360_ANGLE: the ANGLE folder of a Windows build of the example
 # (example/build/windows/x64/ANGLE: include and lib).
 
@@ -35,6 +37,8 @@ add_executable(xr_windows_test
   "${PLUGIN}/xr_openxr_runtime.cc"
   "${PLUGIN}/xr_runtime_info.cc"
   "${PLUGIN}/projection_renderer.cc"
+  "${PLUGIN}/angle_surface_manager.cc"
+  "${PLUGIN}/utils.cc"
   ${PORTABLE}
 )
 target_include_directories(xr_windows_test PRIVATE

@@ -46,7 +46,7 @@ class OpenXrRuntime : public Runtime {
   XrResult CreateSwapchain(int64_t format, uint32_t width, uint32_t height,
                            Swapchain* out) override;
   void DestroySwapchain(uint64_t id) override;
-  bool PollEvent(Event* event) override;
+  XrResult PollEvent(Event* event) override;
   XrResult BeginSession() override;
   XrResult EndSession() override;
   XrResult RequestExitSession() override;

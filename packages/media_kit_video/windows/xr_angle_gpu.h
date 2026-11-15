@@ -48,8 +48,14 @@ class AngleGpu : public Gpu {
       std::function<bool(int64_t handle, ProjectionFrameSnapshot*)>;
   // A context of the players to share with, EGL_NO_CONTEXT when none
   using ShareContext = std::function<EGLContext(EGLDisplay)>;
+  // Holds or lets go of the display for the players' side: |Open| retains it
+  // once eglInitialize succeeded, |Close| releases it, so that the last
+  // player going never terminates it under the view (eglInitialize is not
+  // counted by ANGLE)
+  using DisplayUse = std::function<void(EGLDisplay)>;
 
-  AngleGpu(FrameSource source, ShareContext share);
+  AngleGpu(FrameSource source, ShareContext share, DisplayUse retain = nullptr,
+           DisplayUse release = nullptr);
   ~AngleGpu() override;
 
   bool Open(GpuInfo* info, std::string* error) override;
@@ -97,7 +103,10 @@ class AngleGpu : public Gpu {
   ContentRequest content_;
   FrameSource source_;
   ShareContext share_;
+  DisplayUse retain_;
+  DisplayUse release_;
   EGLDisplay display_ = EGL_NO_DISPLAY;
+  bool display_retained_ = false;
   EGLConfig config_ = nullptr;
   EGLContext context_ = EGL_NO_CONTEXT;
   Microsoft::WRL::ComPtr<ID3D11Device> device_;

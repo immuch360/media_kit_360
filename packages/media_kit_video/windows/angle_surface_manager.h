@@ -111,6 +111,14 @@ class ANGLESurfaceManager {
   // 15), EGL_NO_CONTEXT when no player has one. Safe from any thread.
   static EGLContext ShareContextFor(EGLDisplay display, int32_t client_version);
 
+  // Immuch360: a user of |display| other than the players (the headset view,
+  // patch 15), which initialized it with eglInitialize. ANGLE does not count
+  // eglInitialize, so the last player's |CleanUp| would terminate the display
+  // under the view: while one is held, no player terminates it, and the last
+  // |ReleaseDisplay| does when no player is left. Safe from any thread.
+  static void RetainDisplay(EGLDisplay display);
+  static void ReleaseDisplay(EGLDisplay display);
+
  private:
   // Immuch360: the second internal texture and its pbuffer (patch 6).
   bool CreateBack();
@@ -241,6 +249,9 @@ class ANGLESurfaceManager {
   static std::mutex share_mutex_;
   static std::vector<ANGLESurfaceManager*> share_members_;
   static int64_t last_share_group_;
+  // Immuch360: the holds of |RetainDisplay|, under |share_mutex_| like
+  // |instance_count_|'s changes
+  static int32_t display_users_;
 };
 
 #endif  // ANGLE_SURFACE_MANAGER_H_

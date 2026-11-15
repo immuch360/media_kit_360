@@ -119,7 +119,9 @@ xr_probe::ViewParts MakeParts(const xr_probe::StartRequest& request,
       },
       [](EGLDisplay display) {
         return ANGLESurfaceManager::ShareContextFor(display, 3);
-      });
+      },
+      [](EGLDisplay display) { ANGLESurfaceManager::RetainDisplay(display); },
+      [](EGLDisplay display) { ANGLESurfaceManager::ReleaseDisplay(display); });
   return parts;
 }
 

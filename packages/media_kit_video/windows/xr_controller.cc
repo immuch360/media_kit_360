@@ -354,8 +354,14 @@ void Controller::Run() {
         break;
       }
       Event event;
-      while (!done_ && runtime_->PollEvent(&event)) {
+      XrResult polled = XR_EVENT_UNAVAILABLE;
+      while (!done_ && (polled = runtime_->PollEvent(&event)) == XR_SUCCESS) {
         HandleEvent(event, &done_);
+      }
+      // An instance lost while the session is not running is only seen here
+      // (no frame call is made then): the view ends with runtimeLost
+      if (!done_) {
+        Check(polled, "xrPollEvent");
       }
       if (done_ || lost_) {
         break;

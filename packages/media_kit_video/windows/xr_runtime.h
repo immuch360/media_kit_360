@@ -158,8 +158,10 @@ class Runtime {
   virtual XrResult CreateSwapchain(int64_t format, uint32_t width,
                                    uint32_t height, Swapchain* out) = 0;
   virtual void DestroySwapchain(uint64_t id) = 0;
-  // False once no event waits.
-  virtual bool PollEvent(Event* event) = 0;
+  // XR_SUCCESS with |event| filled, XR_EVENT_UNAVAILABLE once no event waits,
+  // or the error of xrPollEvent (XR_ERROR_INSTANCE_LOST when the runtime quit
+  // while the session was not running, so no frame call could see it).
+  virtual XrResult PollEvent(Event* event) = 0;
   virtual XrResult BeginSession() = 0;
   virtual XrResult EndSession() = 0;
   virtual XrResult RequestExitSession() = 0;

@@ -92,8 +92,12 @@ using DeleteVertexArrays = void(GL_APIENTRY*)(GLsizei, const GLuint*);
 
 }  // namespace
 
-AngleGpu::AngleGpu(FrameSource source, ShareContext share)
-    : source_(std::move(source)), share_(std::move(share)) {}
+AngleGpu::AngleGpu(FrameSource source, ShareContext share, DisplayUse retain,
+                   DisplayUse release)
+    : source_(std::move(source)),
+      share_(std::move(share)),
+      retain_(std::move(retain)),
+      release_(std::move(release)) {}
 
 void AngleGpu::SetContent(const ContentRequest& content) {
   content_ = content;
@@ -136,6 +140,10 @@ bool AngleGpu::Open(GpuInfo* info, std::string* error) {
     *error = "the ANGLE Direct3D 11 display (EGL " + Hex(eglGetError()) + ")";
     display_ = EGL_NO_DISPLAY;
     return false;
+  }
+  if (retain_) {
+    retain_(display_);
+    display_retained_ = true;
   }
   // EGL_EXT_device_query: this ANGLE lists it among the client extensions
   // (IMMUCH360-NOTE.md, patch 1)
@@ -618,11 +626,16 @@ void AngleGpu::Close() {
     eglDestroyContext(display_, context_);
     context_ = EGL_NO_CONTEXT;
   }
-  // The display is the players': never terminated here
-  display_ = EGL_NO_DISPLAY;
   immediate_.Reset();
   adapter3_.Reset();
   device_.Reset();
+  // The display is the players': let go of it last, never terminated here
+  // while a player is left
+  if (display_retained_ && release_) {
+    release_(display_);
+  }
+  display_retained_ = false;
+  display_ = EGL_NO_DISPLAY;
 }
 
 }  // namespace xr_probe

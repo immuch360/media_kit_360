@@ -1162,6 +1162,37 @@ void TestStopReasons() {
   Check(RunWith([](FakeRuntime* r, FakeGpu*) { r->create_result = XR_ERROR_INSTANCE_LOST; }) ==
             StopReason::kRuntimeLost,
         "runtimeLost: at xrCreateInstance");
+  // The runtime quits while the session is not running (no xrWaitFrame then):
+  // only xrPollEvent sees XR_ERROR_INSTANCE_LOST, and the view still ends
+  {
+    FakeRuntime runtime;
+    FakeGpu gpu;
+    runtime.script = {{State(XR_SESSION_STATE_IDLE)}};
+    runtime.exit_after_empty = -1;
+    runtime.poll_error = XR_ERROR_INSTANCE_LOST;
+    std::vector<std::string> log;
+    xr_probe::Controller controller(&runtime, &gpu, TestOptions(&log));
+    controller.Run();
+    Check(controller.StatusNow().reason == StopReason::kRuntimeLost, "runtimeLost: xrPollEvent while IDLE before READY");
+    Check(controller.StatusNow().instance_lost, "runtimeLost: the instance marked lost");
+    Check(runtime.Count("WaitFrame") == 0 && runtime.Count("BeginSession") == 0, "runtimeLost: no frame was asked");
+    Check(runtime.Count("DestroyInstance") == 1, "runtimeLost: the instance destroyed");
+    Check(controller.StatusNow().phase == "stopped", "runtimeLost: stopped");
+  }
+  {
+    FakeRuntime runtime;
+    FakeGpu gpu;
+    Script(&runtime, -1);
+    runtime.script.push_back({State(XR_SESSION_STATE_STOPPING)});
+    runtime.script.push_back({State(XR_SESSION_STATE_IDLE)});
+    runtime.poll_error = XR_ERROR_INSTANCE_LOST;
+    std::vector<std::string> log;
+    xr_probe::Controller controller(&runtime, &gpu, TestOptions(&log));
+    controller.Run();
+    Check(controller.StatusNow().reason == StopReason::kRuntimeLost, "runtimeLost: xrPollEvent while IDLE after STOPPING");
+    Check(runtime.Count("EndSession") == 1, "runtimeLost: the session ended once, at STOPPING");
+    Check(Logged(log, "xrPollEvent"), "runtimeLost: the poll's error logged");
+  }
   Check(RunWith([](FakeRuntime* r, FakeGpu*) { r->create_result = XR_ERROR_EXTENSION_NOT_PRESENT; }, &detail) ==
             StopReason::kFailed,
         "failed: another result, its detail: " + detail);

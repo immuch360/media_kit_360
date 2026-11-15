@@ -14,6 +14,12 @@
 - **Kind 4, the flat pass, in every build.** `ProjectionKind.flat` and `PluginProjection.flat` draw a flat film
   letterboxed (a stereo film's left eye at its seen shape), so a flat player can keep its normal picture while its
   frame goes to the headset. `ProjectionKind` now carries the plugin's numbers (`code`).
+- **Review of version 1, before any headset session.** An instance lost while the session is not running (IDLE)
+  is seen by xrPollEvent and ends the view with `runtimeLost`, where the view stayed running before. The view holds
+  the players' EGL display (`ANGLESurfaceManager::RetainDisplay` and `ReleaseDisplay`), so the last player going
+  during a view no longer terminates it under the view. `XrStop`'s thread no longer holds the plugin: a window
+  closed while the runtime takes its time drops the answer, and the plugin's destructor ends the view before any of
+  its members goes.
 - **Tests:** the headset view's portable C++ tests with ASan and UBSan in the analyze job and with MSVC in the
   `windows-xr` job, the Windows tests on the runner (registry, loader, action calls, WARP refused, strip bytes), the
   flat pass in ANGLE, the Dart calls.

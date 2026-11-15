@@ -315,7 +315,9 @@ Patches:
      only and the runtime guessed from the path; nothing loaded), `XrStart` (content, logPath, matchRefreshRate,
      actionNames, appVersion; returns at once), `XrSetContent` and `XrSetContentRate` (the next video or another mode
      with no new session), `XrSetStrip` (RGBA, at most 1024 x 160, visible), `XrRecenter` (lyingDown), `XrPoll`
-     (after: the state and the events after that sequence) and `XrStop` (answered off the platform thread). Without
+     (after: the state and the events after that sequence) and `XrStop` (answered off the platform thread; the thread
+     holds a token the plugin's destructor clears first, never the plugin itself, and the destructor ends the view
+     before any member goes, so a window closed while the runtime takes its time drops the answer). Without
      the option every call answers `notInBuild`; the Dart side answers `notWindows` on Linux and macOS without a call
      and `notInBuild` without the plugin. Nothing calls into Dart: the app polls (10 times a second while a view
      runs), the queue keeps 64 events, the oldest dropped, numbered on from one view to the next.
@@ -325,13 +327,19 @@ Patches:
      end is `runtimeNotAnswering` and the next start answers that until its thread ends; the plugin's teardown
      detaches a thread that does not end (the core is never destroyed, so no joinable thread is left in a static).
      `xr_session.cc` and `xr_runtime_info.cc` keep the Windows parts: the loader's path, the log file, the registry,
-     the real runtime and GPU side.
+     the real runtime and GPU side. The view holds the players' EGL display while it runs
+     (`ANGLESurfaceManager::RetainDisplay` and `ReleaseDisplay`, given to `AngleGpu` like the share context): ANGLE
+     does not count eglInitialize, so the last player going during a view (an AI job, an idle limit, a test pattern
+     started with no player) no longer terminates the display under it; the view's release terminates it when no
+     player is left.
    - The controller (`xr_controller.cc`, portable): the GPU side opened, the Basic Render Driver (vendor 0x1414,
      device 0x8c) refused as `gpuTooWeak`, the instance (XR_KHR_D3D11_enable, XR_FB_display_refresh_rate,
      XR_EXT_hp_mixed_reality_controller and XR_BD_controller_interaction when offered), the API layers the loader
      lists logged, up to 60 s waiting for a headset, the adapter's LUID and feature level checked, the session, the
      controllers, the formats; then the session's states (begun once ready, ended once stopping, left once exiting or
-     lost) and the frames. What is shown changes at the next frame (`Inbox`): the eye swapchains are made when first
+     lost) and the frames. xrPollEvent's result goes through the same check as the frame calls, so an instance lost
+     while the session is not running (IDLE, before READY or after STOPPING: no frame call then) still ends the view
+     with `runtimeLost`. What is shown changes at the next frame (`Inbox`): the eye swapchains are made when first
      needed and kept, the flat screen's at the frame's size and destroyed when the screen is left, the refresh rate
      chosen again when the frame rate changes (a whole multiple where the runtime offers one; matching can be off),
      a new source recentered. Idle mode draws a dark grey projection layer (0.08) with the strip. The flat screen's
@@ -366,12 +374,13 @@ Patches:
      `/W4 /WX` in the `windows-xr` job (the probe's 140 checks, `test/xr_probe_test.cc`, and version 1's,
      `test/xr_v1_test.cc`: 50 start and stop cycles with every handle destroyed once in order, a stop while waiting
      for the headset, during the preparation and while the runtime hangs in xrWaitFrame, a detached teardown, the
-     content changes, the six screen cases, the binding table, the gestures with time steps, the recentering, the
+     content changes, an instance lost seen by xrPollEvent alone, the six screen cases, the binding table, the gestures with time steps, the recentering, the
      strip, every stop code, the visibility events, the event queue, the runtime guess); on the hosted runner
      (`test/xr/xr_windows_test.cc`) the registry with no runtime and with `XR_RUNTIME_JSON` naming a missing file,
      the bundled loader with no runtime and every action call failing cleanly, the WARP device refused as
      `gpuTooWeak`, the swapchain images taken in place with the bytes written, the strip's 1024 x 160 bytes read back
-     unchanged; the flat pass letterboxing in ANGLE (`test/sphere/plugin_shaders_windows_test.dart`); the Dart calls
+     unchanged, the display held by the view while a real player is made and disposed and terminated by the view's
+     release; the flat pass letterboxing in ANGLE (`test/sphere/plugin_shaders_windows_test.dart`); the Dart calls
      both ways (`test/xr_headset_test.dart`).
    - Waits for a headset (the session of Immuch360 store/m2/release-48/pc-vr-v1-plan.md, section 5): that a real
      runtime takes the plugin's device, orientation and 3D depth, gamma on a real driver, comfort and judder, the

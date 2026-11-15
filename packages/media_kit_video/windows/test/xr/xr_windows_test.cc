@@ -31,9 +31,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "../../angle_surface_manager.h"
 #include "../../projection_view.h"
 #include "../../xr_angle_gpu.h"
 #include "../../xr_controller.h"
@@ -425,6 +427,64 @@ void TestActionsWithoutRuntime(const std::wstring& folder) {
 
 }  // namespace
 
+// The view holds the plugin's display: the last player going during a view
+// (an AI job, an idle limit, a test pattern started with no player) leaves it
+// initialized, and the view's |Close| terminates it once no player is left
+void TestDisplayHeldByTheView() {
+  EGLDisplay held = EGL_NO_DISPLAY;
+  int retained = 0, released = 0;
+  {
+    xr_probe::AngleGpu gpu(
+        nullptr,
+        [](EGLDisplay display) {
+          return ANGLESurfaceManager::ShareContextFor(display, 3);
+        },
+        [&](EGLDisplay display) {
+          held = display;
+          retained++;
+          ANGLESurfaceManager::RetainDisplay(display);
+        },
+        [&](EGLDisplay display) {
+          released++;
+          ANGLESurfaceManager::ReleaseDisplay(display);
+        });
+    gpu.SetContent(Pattern());
+    xr_probe::GpuInfo info;
+    std::string error;
+    if (!gpu.Open(&info, &error)) {
+      Check(false, "display held: the ANGLE device " + error);
+      return;
+    }
+    Check(retained == 1 && released == 0 && held != EGL_NO_DISPLAY,
+          "display held: retained once by Open");
+    bool made = false;
+    try {
+      auto player = std::make_unique<ANGLESurfaceManager>(64, 64);
+      made = true;
+      // The last player goes while the view runs
+      player.reset();
+    } catch (...) {
+    }
+    Check(made, "display held: a player made and disposed");
+    eglMakeCurrent(held, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    Check(eglQueryString(held, EGL_VENDOR) != nullptr,
+          "display held: still initialized after the last player went (EGL " +
+              std::to_string(eglGetError()) + ")");
+    EGLConfig config = nullptr;
+    EGLint count = 0;
+    const EGLint attributes[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_NONE};
+    Check(eglChooseConfig(held, attributes, &config, 1, &count) && count > 0,
+          "display held: the view's display still answers");
+    gpu.Close();
+    Check(released == 1, "display held: released once by Close");
+    gpu.Close();
+    Check(released == 1, "display held: a second Close releases nothing");
+  }
+  Check(released == 1, "display held: the destructor releases nothing more");
+  Check(eglQueryString(held, EGL_VENDOR) == nullptr,
+        "display held: terminated by the view's release, no player left");
+}
+
 int main() {
   const auto folder = Folder();
   TestRuntimeInfo();
@@ -489,6 +549,8 @@ int main() {
   TestImages("R8G8B8A8_UNORM_SRGB typed image", DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
              xr_probe::kDxgiR8G8B8A8UnormSrgb);
   TestStrip();
+  // Last: it terminates the display (the earlier tests hold none)
+  TestDisplayHeldByTheView();
   std::printf("%d failed\n", failures);
   return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
