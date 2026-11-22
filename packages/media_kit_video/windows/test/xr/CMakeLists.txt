@@ -16,6 +16,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(PLUGIN "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+# Renderer C's portable files (patch 16)
+set(RENDERER "${PLUGIN}/../common/renderer")
 set(MEDIA_KIT_360_ANGLE "" CACHE PATH "The ANGLE folder of a Windows build")
 
 set(PORTABLE
@@ -27,7 +29,7 @@ set(PORTABLE
 foreach(test xr_probe_test xr_v1_test)
   add_executable(${test} "${PLUGIN}/test/${test}.cc" ${PORTABLE})
   target_include_directories(${test} PRIVATE
-    "${PLUGIN}" "${PLUGIN}/third_party/openxr/include")
+    "${PLUGIN}" "${RENDERER}" "${PLUGIN}/third_party/openxr/include")
   target_compile_options(${test} PRIVATE /W4 /WX /wd4100)
 endforeach()
 
@@ -36,13 +38,13 @@ add_executable(xr_windows_test
   "${PLUGIN}/xr_angle_gpu.cc"
   "${PLUGIN}/xr_openxr_runtime.cc"
   "${PLUGIN}/xr_runtime_info.cc"
-  "${PLUGIN}/projection_renderer.cc"
+  "${RENDERER}/projection_renderer.cc"
   "${PLUGIN}/angle_surface_manager.cc"
   "${PLUGIN}/utils.cc"
   ${PORTABLE}
 )
 target_include_directories(xr_windows_test PRIVATE
-  "${PLUGIN}" "${PLUGIN}/third_party/openxr/include"
+  "${PLUGIN}" "${RENDERER}" "${PLUGIN}/third_party/openxr/include"
   "${MEDIA_KIT_360_ANGLE}/include")
 # UNICODE as in the app's build (Flutter's runner sets it for every plugin): utils.cc
 # passes wide strings to the Windows calls of the TCHAR kind

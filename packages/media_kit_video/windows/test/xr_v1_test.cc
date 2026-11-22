@@ -3,8 +3,9 @@
 // by the analyze job of the CI with ASan and UBSan, and by MSVC in the xr job.
 //
 //   g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I..
-//     -I../third_party/openxr/include xr_v1_test.cc ../xr_controller.cc
-//     ../xr_input.cc ../xr_session_core.cc -lpthread -o test && ./test
+//     -I../../common/renderer -I../third_party/openxr/include xr_v1_test.cc
+//     ../xr_controller.cc ../xr_input.cc ../xr_session_core.cc -lpthread
+//     -o test && ./test
 //
 // What they pin: the session core's lifecycle (start and stop cycles, a stop
 // while waiting, during the preparation, while the runtime hangs, the
@@ -24,7 +25,7 @@
 #include <thread>
 #include <vector>
 
-#include "../projection_view.h"
+#include "projection_view.h"
 #include "../xr_controller.h"
 #include "../xr_input.h"
 #include "../xr_probe_core.h"

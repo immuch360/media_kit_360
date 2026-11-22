@@ -2,7 +2,8 @@
 // (IMMUCH360-NOTE.md, patch 15), any C++17 compiler, no Windows header: run
 // by the analyze job of the CI, and by MSVC in the xr job.
 //
-//   g++ -std=c++17 -Wall -Wextra -I.. -I../third_party/openxr/include
+//   g++ -std=c++17 -Wall -Wextra -I.. -I../../common/renderer
+//     -I../third_party/openxr/include
 //     xr_probe_test.cc ../xr_controller.cc ../xr_input.cc
 //     ../xr_session_core.cc -o test && ./test
 //
@@ -30,7 +31,7 @@
 #include <string>
 #include <vector>
 
-#include "../projection_view.h"
+#include "projection_view.h"
 #include "../xr_controller.h"
 #include "../xr_probe_core.h"
 #include "xr_fakes.h"

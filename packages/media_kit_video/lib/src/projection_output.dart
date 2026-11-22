@@ -369,7 +369,7 @@ abstract final class ProjectionOutput {
   /// or removes it when [timesUs] is null. The frame shown is drawn again at
   /// once, a paused one included. The time of each frame is mpv's time-pos
   /// when the frame is handed over, corrected by its target time (see
-  /// windows/stabilization.h).
+  /// common/renderer/stabilization.h).
   static Future<StabilizationResult> setStabilization(
     int handle, {
     required bool enabled,

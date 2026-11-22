@@ -1,5 +1,14 @@
 # Changelog
 
+## Next (branch `parity-shared-native-51`, not tagged)
+
+- **Renderer C's portable files in one folder, no change of behaviour.** `projection_renderer.{h,cc}`,
+  `projection_shaders.h`, `projection_view.h` and `stabilization.h` moved from `windows/` to `common/renderer/`
+  (IMMUCH360-NOTE.md, patch 16), the first step towards renderer C on Linux. Windows builds them from there. The CI
+  now compiles `projection_renderer.cc` against Mesa's EGL and GLES 3 headers on Ubuntu, checks that no Windows
+  header enters the folder, and runs a new C++ test of the window's view (`common/renderer/test/projection_view_test.cc`)
+  next to the stabilisation test.
+
 ## Next (branch `xr-v1`, to be tagged 1.2.0 after the first headset session)
 
 - **Headset view, experimental, not yet tried in a headset by the project.** In a Windows build with the

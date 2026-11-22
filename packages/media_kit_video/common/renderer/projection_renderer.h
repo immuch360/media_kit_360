@@ -13,6 +13,11 @@
 //
 // Everything here runs on the one worker thread of |VideoOutputManager|, with
 // the context of the player's |ANGLESurfaceManager| current.
+//
+// Only EGL and OpenGL ES 3.0 here, no Windows header: the platforms share it
+// from common/renderer (IMMUCH360-NOTE.md, patch 16). Windows builds it; the
+// Linux CI compiles it against Mesa's headers, and the Linux plugin will draw
+// with it once its context asks for OpenGL ES 3.0.
 
 #ifndef PROJECTION_RENDERER_H_
 #define PROJECTION_RENDERER_H_

@@ -22,6 +22,8 @@ Layout (no change to the code):
   place under `macos/media_kit_video/Sources/media_kit_video/{plugin,stub}/common/`, and `common/darwin/Classes/` is
   left out: the Windows mirror of the work tree and Windows clones do not carry symbolic links. `common/darwin/`
   keeps the Makefile (libmpv headers) and the Podspec helper the macOS podspec uses.
+- `common/renderer/`: the portable files of renderer C (patches 6, 14 and 15), shared by the platforms since
+  22 November 2026 (patch 16). They were written under `windows/`, and the patches below name them where they are now.
 
 Patches:
 
@@ -94,8 +96,8 @@ Patches:
    textures again, and `Resize` zeroes `texture_id_` before the old texture is unregistered and gives it the new id
    only once the texture is in the map, both under the lock the callbacks take.
 
-6. Windows, renderer C: the 360 view drawn by the plugin (`windows/projection_renderer.{h,cc}`,
-   `windows/projection_shaders.h`, `windows/video_output.{h,cc}`, `windows/video_output_manager.{h,cc}`,
+6. Windows, renderer C: the 360 view drawn by the plugin (`common/renderer/projection_renderer.{h,cc}`,
+   `common/renderer/projection_shaders.h`, `windows/video_output.{h,cc}`, `windows/video_output_manager.{h,cc}`,
    `windows/angle_surface_manager.{h,cc}`, `windows/media_kit_video_plugin.cc`, `windows/CMakeLists.txt`,
    `lib/src/projection_output.dart`, exported by `lib/media_kit_video.dart`). Decision DP1 of Immuch360 Desktop
    (2026-10-09): the 360 view as an mpv user shader changed through `glsl-shader-opts` rebuilt mpv's passes at every
@@ -139,7 +141,7 @@ Patches:
    would fulfil, holding `VideoOutputManager`'s mutex, so that every later player of the app hung; the cleanup is now
    posted to the thread pool in that case too.
 7. Windows, two players for one raw 360 file (`windows/angle_surface_manager.{h,cc}`,
-   `windows/projection_renderer.{h,cc}`, `windows/projection_shaders.h`, `windows/video_output.{h,cc}`,
+   `common/renderer/projection_renderer.{h,cc}`, `common/renderer/projection_shaders.h`, `windows/video_output.{h,cc}`,
    `windows/video_output_manager.{h,cc}`, `windows/media_kit_video_plugin.cc`, `lib/src/projection_output.dart`).
    The raw files whose lenses are in two streams (Insta360 X4 and later, X3 pairs, DJI Osmo 360) were stacked side by
    side in one mpv core with FFmpeg's `hstack`, which needs the frames in memory: two 3840x3840 HEVC streams copied
@@ -253,8 +255,8 @@ Patches:
    support folder), the projection of its assets (`projection_params.dart`), its two lens raw file logic and its page.
    The plugin renderer test runs on every system; the shader test needs ANGLE, so the Windows build of the example
    app (`MEDIA_KIT_360_BUILD_DIR` names another build folder).
-14. Windows, renderer C stabilises a raw 360 video with its camera's motion (`windows/stabilization.h`,
-   `windows/test/stabilization_test.cc`, `windows/projection_shaders.h`, `windows/projection_renderer.{h,cc}`,
+14. Windows, renderer C stabilises a raw 360 video with its camera's motion (`common/renderer/stabilization.h`,
+   `common/renderer/test/stabilization_test.cc`, `common/renderer/projection_shaders.h`, `common/renderer/projection_renderer.{h,cc}`,
    `windows/video_output.{h,cc}`, `windows/video_output_manager.{h,cc}`, `windows/media_kit_video_plugin.cc`,
    `lib/src/projection_output.dart`, `lib/src/sphere/plugin_renderer.dart`, 12 November 2026, release 1.1.0). The app
    reads the motion track of an Insta360, GoPro or DJI file and builds one correction per frame (issue 14 of the app),
@@ -286,7 +288,7 @@ Patches:
    stitched file has no table.
 
 15. Windows, the headset view: OpenXR in the plugin, off unless built with the `MEDIA_KIT_360_XR` option of CMake
-   (`windows/xr_*.h` and `.cc`, `windows/projection_view.h`, `lib/xr.dart`, `lib/src/xr_headset.dart`; Immuch360
+   (`windows/xr_*.h` and `.cc`, `common/renderer/projection_view.h`, `lib/xr.dart`, `lib/src/xr_headset.dart`; Immuch360
    store/m2/release-48/pc-vr-v1-plugin.md). Experimental: not yet tried in a headset by the project. It began as the
    probe of 14 November 2026 (branch `xr-probe`) and is version 1 since branch `xr-v1`; the C++ namespace keeps the
    probe's name.
@@ -388,6 +390,17 @@ Patches:
      the strip's size and place, the app surviving a headset taken off and a runtime killed, GPU memory with an 8K
      video. Not in version 1: the raw files of two players, the stabilisation in the headset, photos, a frame ring or
      fence (the frame is published after the player's glFinish), audio routing.
+
+16. All platforms, renderer C's portable files in one folder (`common/renderer/projection_renderer.{h,cc}`,
+   `projection_shaders.h`, `projection_view.h`, `stabilization.h` and `test/`, `windows/CMakeLists.txt`,
+   `windows/test/xr/CMakeLists.txt`, 22 November 2026; Immuch360 desktop parity plan, lot L12). The files moved from
+   `windows/` unchanged but for their comments: they include only EGL, OpenGL ES 3.0 and the C++17 library. Windows
+   builds `projection_renderer.cc` from there, with the folder on its include path, so the plugin's Windows build and
+   behaviour do not change. The Linux plugin does not build them yet (its context is OpenGL ES 2.0, patch 10); the CI
+   compiles `projection_renderer.cc` against Mesa's EGL and GLES 3 headers on Ubuntu with every g++ warning an error,
+   and runs `test/stabilization_test.cc` and `test/projection_view_test.cc` (the window's view, the eye's view, the
+   uniforms as OpenGL reads them) there. The SwiftPM package of macOS reads only its own folder: a macOS target will
+   need these files reached from `macos/media_kit_video/` (not done here).
 
 Not done yet (plan 20-plan-desktop.md, 2.2): the D3D11 device on the adapter Flutter uses. It is not needed on a
 laptop with two GPUs: Flutter's ANGLE, the plugin's device and display and mpv's decoder all take the adapter DXGI

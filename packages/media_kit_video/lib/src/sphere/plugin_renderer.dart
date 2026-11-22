@@ -15,7 +15,8 @@
 // - a tier changes at most once a second once a frame was drawn, since mpv then draws its frame again at the new size;
 // - a paused video is redrawn by the plugin from the frame it keeps, without mpv;
 // - a raw video stabilised with its camera's motion (setStabilization) has its table sent once; the plugin finds the
-//   correction of each frame it draws at that frame's time (windows/stabilization.h), so nothing goes per frame.
+//   correction of each frame it draws at that frame's time (common/renderer/stabilization.h), so nothing goes per
+//   frame.
 //
 // What a 360 player page calls: PluginRenderer.forController(controller), then attach before the file opens (so that
 // the texture is the view from the first frame), setView on every drag, wheel or key event, setOutputSize when the

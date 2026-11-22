@@ -36,7 +36,7 @@
 #include <vector>
 
 #include "../../angle_surface_manager.h"
-#include "../../projection_view.h"
+#include "projection_view.h"
 #include "../../xr_angle_gpu.h"
 #include "../../xr_controller.h"
 #include "../../xr_input.h"

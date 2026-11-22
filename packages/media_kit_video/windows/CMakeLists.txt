@@ -102,12 +102,15 @@ if(MEDIA_KIT_LIBS_AVAILABLE)
     "${ANGLE_SRC}/include"
   )
 
+  # Immuch360: renderer C's portable files, shared by the platforms (patch 16)
+  set(MEDIA_KIT_360_RENDERER "${CMAKE_CURRENT_SOURCE_DIR}/../common/renderer")
+
   add_library(
     ${PLUGIN_NAME} SHARED
     "angle_surface_manager.cc"
     "media_kit_video_plugin_c_api.cc"
     "media_kit_video_plugin.cc"
-    "projection_renderer.cc"
+    "${MEDIA_KIT_360_RENDERER}/projection_renderer.cc"
     "video_output_manager.cc"
     "video_output.cc"
     "utils.cc"
@@ -121,6 +124,7 @@ if(MEDIA_KIT_LIBS_AVAILABLE)
   # portable), the headset view compiled in only with MEDIA_KIT_360_XR
   # (patch 15)
   target_include_directories(${PLUGIN_NAME} PRIVATE
+    "${MEDIA_KIT_360_RENDERER}"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openxr/include")
   if(MEDIA_KIT_360_XR_ON)
     target_compile_definitions(${PLUGIN_NAME} PRIVATE MEDIA_KIT_360_XR=1

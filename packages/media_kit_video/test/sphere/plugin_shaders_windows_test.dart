@@ -1,4 +1,4 @@
-// The passes of renderer C (windows/projection_shaders.h of this package, IMMUCH360-NOTE.md patch 6) in
+// The passes of renderer C (common/renderer/projection_shaders.h of this package, IMMUCH360-NOTE.md patch 6) in
 // the ANGLE of the Windows build, without a window (the flat pass of kind 4, patch 15, letterboxes a film): the sources are read from the header and put together as
 // ProjectionRenderer does, all three programs must compile and link in OpenGL ES 3.0, and the equirectangular pass
 // draws a synthetic frame (upper half red, lower half blue, the quarter ahead green) where the view looks: up is up,
@@ -41,7 +41,7 @@ String? _buildDir() {
 
 /// The GLSL constants of projection_shaders.h by name
 Map<String, String> _shaderSources() {
-  final header = File(p.join('windows', 'projection_shaders.h')).readAsStringSync();
+  final header = File(p.join('common', 'renderer', 'projection_shaders.h')).readAsStringSync();
   return {
     for (final match in RegExp(
       r'constexpr const char\* (k\w+) = R"glsl\((.*?)\)glsl";',

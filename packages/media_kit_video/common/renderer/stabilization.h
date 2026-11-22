@@ -23,8 +23,8 @@
 // one frame off with time-pos alone, 0.15% with the rule, all of them among
 // the first five draws of a file.
 //
-// No Windows header here: windows/test/stabilization_test.cc builds it with
-// any C++17 compiler.
+// No Windows header here: test/stabilization_test.cc builds it with any
+// C++17 compiler.
 
 #ifndef STABILIZATION_H_
 #define STABILIZATION_H_
