@@ -1,5 +1,15 @@
 # Changelog
 
+## Next (branch `spatial-passes-53`, not tagged)
+
+- **The Spatial 2.5D passes of renderer C on Windows (IMMUCH360-NOTE.md, patch 17).** The passes of the phones'
+  Spatial 2.5D player (each eye, grey, 7 x 7 block matching both ways, left right check, temporal blend, blur,
+  synthesis at a viewpoint) drawn by the plugin from renderer C's intermediate texture, with the tiers and the adaptive
+  rule of the phones: `VideoOutputManager.SetSpatial`, `SetViewpoint`, `SetSpatialDebug`, `SpatialStats`, and
+  `lib/src/spatial_output.dart` on the Dart side. Re-landed from the app's October work on patches 14 to 16: in
+  `common/renderer`, the equirectangular eye on the view of patch 15. The CI compiles the passes for Linux with g++ and
+  clang, runs the shader test on Mesa's llvmpipe (Linux) and in ANGLE on WARP (Windows). Not tried on a GPU.
+
 ## Next (branch `parity-shared-native-51`, not tagged)
 
 - **Renderer C's portable files in one folder, no change of behaviour.** `projection_renderer.{h,cc}`,

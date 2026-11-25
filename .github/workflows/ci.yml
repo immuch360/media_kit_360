@@ -149,8 +149,21 @@ jobs:
       - name: Renderer C compiles on Linux
         working-directory: packages/media_kit_video/common/renderer
         run: |
-          g++ -std=c++17 -Wall -Wextra -Werror -c projection_renderer.cc -o "$RUNNER_TEMP/projection_renderer_gcc.o"
-          clang++ -std=c++17 -Wall -Wextra -Werror -c projection_renderer.cc -o "$RUNNER_TEMP/projection_renderer_clang.o"
+          for file in projection_renderer spatial_renderer; do
+            g++ -std=c++17 -Wall -Wextra -Werror -c "$file.cc" -o "$RUNNER_TEMP/${file}_gcc.o"
+            clang++ -std=c++17 -Wall -Wextra -Werror -c "$file.cc" -o "$RUNNER_TEMP/${file}_clang.o"
+          done
+
+      # The Spatial passes of renderer C (patch 11) on Mesa's software renderer, llvmpipe, without a window: every
+      # program compiles and links in OpenGL ES 3.0, the disparity of a random dot stereo pair is found, the views at
+      # p = 0, 0.5 and 1 are the left eye, the half way view and the right eye (test/spatial/spatial_shaders_windows_test.dart)
+      - name: The Spatial passes on Mesa
+        working-directory: packages/media_kit_video
+        env:
+          MEDIA_KIT_360_GLES: mesa
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          EGL_PLATFORM: surfaceless
+        run: flutter test test/spatial/spatial_shaders_windows_test.dart --reporter expanded
 
       - name: Upload the bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -203,6 +216,14 @@ jobs:
         env:
           MEDIA_KIT_360_BUILD_DIR: ${{ github.workspace }}\example\build\windows\x64\runner\Release
         run: flutter test test/sphere/plugin_shaders_windows_test.dart
+
+      # The Spatial passes of renderer C (patch 11) in the same ANGLE on WARP: compiled and linked, the disparity of a
+      # random dot stereo pair, the views at p = 0, 0.5 and 1, the flat and the equirectangular eye
+      - name: The Spatial passes in ANGLE
+        working-directory: packages/media_kit_video
+        env:
+          MEDIA_KIT_360_BUILD_DIR: ${{ github.workspace }}\example\build\windows\x64\runner\Release
+        run: flutter test test/spatial/spatial_shaders_windows_test.dart --reporter expanded
 
       - name: Upload the build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

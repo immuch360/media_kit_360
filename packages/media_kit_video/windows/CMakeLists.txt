@@ -111,6 +111,7 @@ if(MEDIA_KIT_LIBS_AVAILABLE)
     "media_kit_video_plugin_c_api.cc"
     "media_kit_video_plugin.cc"
     "${MEDIA_KIT_360_RENDERER}/projection_renderer.cc"
+    "${MEDIA_KIT_360_RENDERER}/spatial_renderer.cc"
     "video_output_manager.cc"
     "video_output.cc"
     "utils.cc"

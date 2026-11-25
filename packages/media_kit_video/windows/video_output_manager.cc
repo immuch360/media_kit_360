@@ -152,6 +152,37 @@ bool VideoOutputManager::XrSnapshot(int64_t handle,
   return output->second->XrSnapshot(out);
 }
 
+bool VideoOutputManager::SetViewpoint(int64_t handle, float viewpoint) {
+  std::lock_guard<std::mutex> lookup_lock(lookup_mutex_);
+  auto output = lookup_.find(handle);
+  if (output == lookup_.end()) {
+    return false;
+  }
+  output->second->SetViewpoint(viewpoint);
+  return true;
+}
+
+bool VideoOutputManager::SetSpatialDebug(int64_t handle, bool disparity_map) {
+  std::lock_guard<std::mutex> lookup_lock(lookup_mutex_);
+  auto output = lookup_.find(handle);
+  if (output == lookup_.end()) {
+    return false;
+  }
+  output->second->SetSpatialDebug(disparity_map);
+  return true;
+}
+
+std::optional<flutter::EncodableMap> VideoOutputManager::SpatialStats(
+    int64_t handle,
+    bool probe) {
+  std::lock_guard<std::mutex> lookup_lock(lookup_mutex_);
+  auto output = lookup_.find(handle);
+  if (output == lookup_.end()) {
+    return std::nullopt;
+  }
+  return output->second->SpatialStats(probe);
+}
+
 VideoOutputManager::~VideoOutputManager() {
 #if MEDIA_KIT_360_XR
   // Immuch360: the headset view ends before the players and the plugin go,

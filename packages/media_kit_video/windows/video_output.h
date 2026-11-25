@@ -32,6 +32,7 @@
 #include "angle_surface_manager.h"
 #include "projection_renderer.h"
 #include "stabilization.h"
+#include "spatial_renderer.h"
 #include "thread_pool.h"
 
 typedef struct _VideoOutputConfiguration {
@@ -53,8 +54,9 @@ typedef struct _VideoOutputConfiguration {
 } VideoOutputConfiguration;
 
 // Immuch360: wakes the primary player of a pair once a frame waited long
-// enough for its partner's (IMMUCH360-NOTE.md, patch 7). One thread that
-// sleeps until the earliest time asked, then calls |fire|.
+// enough for its partner's (IMMUCH360-NOTE.md, patch 7), and a player of the
+// Spatial passes when they want to settle (patch 17). One thread that sleeps
+// until the earliest time asked, then calls |fire|.
 class PairTimer {
  public:
   explicit PairTimer(std::function<void()> fire);
@@ -149,6 +151,19 @@ class VideoOutput {
   // renderer C is off for this player.
   bool XrSnapshot(ProjectionFrameSnapshot* out);
 
+  // Immuch360: the Spatial passes (IMMUCH360-NOTE.md, patch 17). A projection
+  // whose |spatial| is set draws them; the viewpoint (0 the left camera, 1 the
+  // right one) and the disparity map shown instead of the view are kept and
+  // merged as views are (|SetView|), from any thread, and a paused video is
+  // redrawn from the frame kept.
+  void SetViewpoint(float viewpoint);
+  void SetSpatialDebug(bool disparity_map);
+
+  // Immuch360: |ProjectionStats| with what the Spatial passes did: the figures
+  // of their last second, their tier, the counts since the last call, and with
+  // the probe the middle row of the output.
+  flutter::EncodableMap SpatialStats(bool probe);
+
  private:
   // Immuch360: the setup of renderer C, null when it is off.
   std::shared_ptr<const ProjectionSetup> CurrentProjection();
@@ -199,6 +214,15 @@ class VideoOutput {
   // The correction of the frame at |frame_time| (uCorrection, column major)
   // into |out|; false when nothing stabilises it (off, no table, no time).
   bool CorrectionAt(double frame_time, float out[9]);
+
+  // Immuch360, the Spatial passes (patch 17): the timer set for their next
+  // settling run, and the draw it asks for on the thread pool.
+  void ArmSettle();
+  void PostSettleDraw();
+  // The size of the output of |setup|: the box Dart gave, capped, and for a
+  // flat Spatial setup the shape of one eye inside it.
+  void OutputSizeOf(const ProjectionSetup& setup, int32_t* width,
+                    int32_t* height);
 
 
   void NotifyRender();
@@ -292,6 +316,18 @@ class VideoOutput {
     // unknown)
     int64_t stabilized = 0;
     double frame_time = -1.0;
+    // Immuch360, the Spatial passes (patch 17): the last figures, the counts
+    // since the last read, the size of the last output drawn, and the middle
+    // row of the output read with the probe
+    SpatialCounters spatial;
+    int64_t spatial_draws = 0;
+    int64_t disparity_runs = 0;
+    int64_t settle_runs = 0;
+    int64_t quality_changes = 0;
+    int32_t drawn_width = 0;
+    int32_t drawn_height = 0;
+    std::vector<uint32_t> probe_row;
+    bool probe_row_ready = false;
   };
   ProjectionCounters projection_counters_;
   // Immuch360: the frame of renderer C for the headset probe (patch 15),
@@ -309,6 +345,16 @@ class VideoOutput {
   double frame_period_ = 0.0;
   int32_t frame_period_reads_ = 0;
   double frame_time_ = -1.0;
+
+  // Immuch360, the Spatial passes (patch 17): the viewpoint and the debug
+  // view, under |projection_mutex_|; the renderer and its settling timer on the
+  // thread pool
+  float viewpoint_ = 0.5f;
+  bool spatial_debug_ = false;
+  std::unique_ptr<SpatialRenderer> spatial_renderer_ = nullptr;
+  // Made on the thread pool and ended by the destructor: under its mutex
+  std::mutex settle_mutex_;
+  std::unique_ptr<PairTimer> settle_timer_ = nullptr;
 
   // Immuch360: the pairing of two players (patch 7). |partner_| on the
   // primary player, |primary_| on the secondary one; thread pool only, as
