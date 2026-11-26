@@ -9,6 +9,11 @@
   `lib/src/spatial_output.dart` on the Dart side. Re-landed from the app's October work on patches 14 to 16: in
   `common/renderer`, the equirectangular eye on the view of patch 15. The CI compiles the passes for Linux with g++ and
   clang, runs the shader test on Mesa's llvmpipe (Linux) and in ANGLE on WARP (Windows). Not tried on a GPU.
+- **The Spatial 2.5D passes on macOS, in Metal (IMMUCH360-NOTE.md, patch 18).** The same calls answered on macOS by
+  the renderer of the app's iOS Spatial player and its shaders, drawing from the frame mpv drew (OpenGL or software)
+  into a pixel buffer Flutter shows: flat and equirectangular eyes, VR180, the tiers and the adaptive rule, the
+  redraw of a paused frame, the stats and the probe. The CI type checks the macOS plugin's Swift and runs the passes
+  on a Mac runner's Metal device. Not tried on a Mac with a real GPU.
 
 ## Next (branch `parity-shared-native-51`, not tagged)
 

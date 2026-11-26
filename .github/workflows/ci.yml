@@ -1,8 +1,8 @@
 name: CI
 
 # The packages analysed and tested, the example app built for Windows and Linux on GitHub's hosted runners, the passes
-# of renderer C compiled by the ANGLE of the Windows build, and the isolated EGL context of the Linux plugin checked on a
-# virtual screen. Flutter 3.47.2, the version of the Immuch360 app.
+# of renderer C compiled by the ANGLE of the Windows build, the isolated EGL context of the Linux plugin checked on a
+# virtual screen, and the Spatial passes of macOS run on a Mac runner's Metal device. Flutter 3.47.2, the version of the Immuch360 app.
 
 on:
   push:
@@ -172,6 +172,50 @@ jobs:
           path: example/build/linux/x64/release/bundle
           retention-days: 14
           if-no-files-found: error
+
+  # The Spatial passes of macOS in Metal (patch 18): the Swift of the macOS plugin type checked against the part of
+  # FlutterMacOS it uses (test/typecheck) and mpv's headers of common/darwin (no Flutter app: the example has no
+  # macOS folder; the app's macOS build compiles the plugin for real), the shaders embedded as embed_shaders.py
+  # writes them, then the passes run on the runner's Metal device (a virtual machine's paravirtual GPU) on a random dot
+  # stereo pair (test/spatial/main.swift)
+  macos:
+    name: macOS, the Spatial passes in Metal
+    runs-on: macos-15
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/media_kit_video/macos
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The shaders embedded from SpatialShaders.metal
+        run: python3 spatial/embed_shaders.py --check
+
+      - name: The plugin's Swift type checked
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/typecheck"
+          mkdir -p "$work/flutter" "$work/mpv"
+          make -C ../common/darwin HEADERS_DESTDIR="$work/mpv"
+          printf 'module Mpv {\n  header "mpv/client.h"\n  header "mpv/render.h"\n  header "mpv/render_gl.h"\n  export *\n}\n' \
+            > "$work/mpv/module.modulemap"
+          target="$(uname -m)-apple-macos12.0"
+          xcrun swiftc -target "$target" -parse-as-library -emit-module -module-name FlutterMacOS \
+            -emit-module-path "$work/flutter/FlutterMacOS.swiftmodule" test/typecheck/FlutterMacOS.swift
+          find media_kit_video/Sources/media_kit_video/plugin -name '*.swift' | sort > "$work/files.txt"
+          cat "$work/files.txt"
+          xcrun swiftc -target "$target" -typecheck -parse-as-library -module-name media_kit_video -D SWIFT_PACKAGE \
+            -I "$work/flutter" -I "$work/mpv" -Xcc -DGL_SILENCE_DEPRECATION -Xcc -DCOREVIDEO_SILENCE_GL_DEPRECATION \
+            $(cat "$work/files.txt")
+
+      - name: The Spatial passes on the Metal device
+        run: |
+          set -euo pipefail
+          xcrun swiftc -O -target "$(uname -m)-apple-macos12.0" -o "$RUNNER_TEMP/spatial_metal_test" \
+            media_kit_video/Sources/media_kit_video/plugin/spatial/*.swift test/spatial/main.swift
+          "$RUNNER_TEMP/spatial_metal_test"
 
   windows:
     name: Windows build of the example

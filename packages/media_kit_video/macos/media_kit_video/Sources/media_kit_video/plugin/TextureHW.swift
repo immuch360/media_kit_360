@@ -19,6 +19,10 @@ public class TextureHW: NSObject, FlutterTexture, ResizableTextureProtocol {
     objects: [],
     skipCheckArgs: true
   )
+  // Immuch360 (IMMUCH360-NOTE.md, patch 18): while the Spatial passes read the frame through Metal, OpenGL finishes
+  // it before render returns (glFinish), since a flush only sends the commands and Metal would read the IOSurface
+  // before OpenGL wrote it
+  public var finishBeforeRead = false
 
   // Immuch360: nil when OpenGL gives no pixel format or no context, and VideoOutput renders with TextureSW instead
   init?(
@@ -193,7 +197,11 @@ public class TextureHW: NSObject, FlutterTexture, ResizableTextureProtocol {
     ]
     mpv_render_context_render(renderContext, &params)
 
-    glFlush()
+    if finishBeforeRead {
+      glFinish()
+    } else {
+      glFlush()
+    }
 
     textureContexts.pushAsReady(textureContext!)
   }

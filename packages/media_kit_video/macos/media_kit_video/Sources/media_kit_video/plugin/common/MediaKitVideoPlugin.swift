@@ -57,6 +57,39 @@ public class MediaKitVideoPlugin: NSObject, FlutterPlugin {
       handleSetSizeMethodCall(call.arguments, result)
     case "VideoOutputManager.Dispose":
       handleDisposeMethodCall(call.arguments, result)
+    // Immuch360 (IMMUCH360-NOTE.md, patch 18): the Spatial passes, in Metal
+    case "VideoOutputManager.SetSpatial":
+      handleSetSpatialMethodCall(call.arguments, result)
+    case "VideoOutputManager.SetViewpoint":
+      let args = call.arguments as? [String: Any] ?? [:]
+      result(
+        videoOutputManager.setViewpoint(
+          handle: MediaKitVideoPlugin.handleOf(args),
+          viewpoint: MediaKitVideoPlugin.floatOf(args["viewpoint"], 0.5)
+        ))
+    case "VideoOutputManager.SetView":
+      let args = call.arguments as? [String: Any] ?? [:]
+      result(
+        videoOutputManager.setView(
+          handle: MediaKitVideoPlugin.handleOf(args),
+          yaw: MediaKitVideoPlugin.floatOf(args["yaw"], 0),
+          pitch: MediaKitVideoPlugin.floatOf(args["pitch"], 0),
+          fov: MediaKitVideoPlugin.floatOf(args["fov"], 90)
+        ))
+    case "VideoOutputManager.SetSpatialDebug":
+      let args = call.arguments as? [String: Any] ?? [:]
+      result(
+        videoOutputManager.setSpatialDebug(
+          handle: MediaKitVideoPlugin.handleOf(args),
+          disparityMap: (args["disparityMap"] as? NSNumber)?.boolValue ?? false
+        ))
+    case "VideoOutputManager.SpatialStats":
+      let args = call.arguments as? [String: Any] ?? [:]
+      result(
+        videoOutputManager.spatialStats(
+          handle: MediaKitVideoPlugin.handleOf(args),
+          probe: (args["probe"] as? NSNumber)?.boolValue ?? false
+        ))
     case "Utils.EnterNativeFullscreen":
       handleEnterNativeFullscreenMethodCall(call.arguments, result)
     case "Utils.ExitNativeFullscreen":
@@ -99,6 +132,40 @@ public class MediaKitVideoPlugin: NSObject, FlutterPlugin {
     )
 
     result(nil)
+  }
+
+  // Immuch360: the Spatial calls send the handle as a number, upstream's calls as a string
+  private static func handleOf(_ args: [String: Any]) -> Int64 {
+    if let number = args["handle"] as? NSNumber {
+      return number.int64Value
+    }
+    if let text = args["handle"] as? String, let value = Int64(text) {
+      return value
+    }
+    return 0
+  }
+
+  private static func floatOf(_ value: Any?, _ fallback: Float) -> Float {
+    if let number = value as? NSNumber {
+      return number.floatValue
+    }
+    return fallback
+  }
+
+  private func handleSetSpatialMethodCall(
+    _ arguments: Any?,
+    _ result: @escaping FlutterResult
+  ) {
+    let args = arguments as? [String: Any] ?? [:]
+    videoOutputManager.setSpatial(
+      handle: MediaKitVideoPlugin.handleOf(args),
+      arguments: args,
+      completion: { answer in
+        DispatchQueue.main.async {
+          result(answer)
+        }
+      }
+    )
   }
 
   private func handleSetSizeMethodCall(

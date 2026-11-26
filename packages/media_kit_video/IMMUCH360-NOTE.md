@@ -402,6 +402,38 @@ Patches:
    uniforms as OpenGL reads them) there. The SwiftPM package of macOS reads only its own folder: a macOS target will
    need these files reached from `macos/media_kit_video/` (not done here).
 
+18. macOS, the Spatial 2.5D passes in Metal (`macos/media_kit_video/Sources/media_kit_video/plugin/spatial/`:
+   `SpatialMetalRenderer.swift`, `SpatialMetalOutput.swift`, `SpatialMetalShaders.swift`; `plugin/common/VideoOutput.swift`,
+   `plugin/common/VideoOutputManager.swift`, `plugin/common/MediaKitVideoPlugin.swift`, `plugin/TextureHW.swift`;
+   `macos/spatial/SpatialShaders.metal` and `embed_shaders.py`; `macos/test/`). The calls of patch 17
+   (`VideoOutputManager.SetSpatial`, `SetViewpoint`, `SetSpatialDebug`, `SpatialStats`, and `SetView` for an
+   equirectangular video) answered on macOS, where renderer C does not exist: the renderer of the app's iOS Spatial
+   player (`mobile/ios/Runner/Spatial/SpatialRenderer.swift` of github.com/freeKC/Immuch360, which imports Metal and
+   no UIKit) with its shaders word for word (`SpatialShaders.metal`, the SHA-256 in `SpatialMetalShaders.swift`),
+   drawing into a texture instead of an MTKView. mpv draws each frame at the frame size of the setup (the video's
+   shape, at most `maxFrameWidth` wide and `maxFramePixels` pixels) into the pixel buffers of `TextureHW` (OpenGL;
+   it then finishes the frame with `glFinish` before returning, since Metal reads the same IOSurface) or of
+   `TextureSW` (a Mac without OpenGL, such as a virtual machine); `SpatialMetalOutput` reads the newest one as a Metal
+   texture through `CVMetalTextureCache` (no copy; a buffer that is no IOSurface is copied), runs the passes (eyes,
+   grey, 7 x 7 block matching both ways, the left right check, the guided blur, the blend over time, the synthesis;
+   for an equirectangular video the view of each eye first, VR180 black behind), and draws the view into one of
+   three IOSurface pixel buffers of its own, which the texture registered with Flutter (`SpatialSwitchTexture`, so
+   the texture id stays the VideoController's) then shows. The output takes the shape of one eye inside the box
+   Dart gives, an equirectangular one the box, at most `maxOutputHeight` lines, as on Windows; Flutter is told the
+   output's size. The tiers and the adaptive rule are the phones' (Metal's GPU time of each command buffer); a new
+   viewpoint, view or debug switch draws the frame kept again on the output's worker thread, without mpv, merged
+   when they come faster than the passes draw, and the first redraw of a still frame runs the estimation three more
+   times on the same eyes (the settling). `SpatialStats` gives the map of Windows (the device's name in
+   `glRenderer`, the probe's five pixels at renderer C's places and the middle row). The shaders are compiled from
+   source when the passes are first turned on (`makeLibrary(source:)`), so that neither Swift Package Manager nor
+   CocoaPods builds a `.metal` file; a pass that does not compile leaves the left eye shown, a device without Metal
+   refuses the setup with the reason. Checked in CI on a Mac runner (`macos` job of `.github/workflows/ci.yml`): the
+   plugin's Swift type checked against the part of FlutterMacOS it uses (`macos/test/typecheck/FlutterMacOS.swift`)
+   and mpv's headers, the embedded shaders equal to `SpatialShaders.metal`, and the passes run on the runner's Metal
+   device (`macos/test/spatial/main.swift`: the views at p = 0, 0.5 and 1 of a random dot pair, the copy path, the
+   top bottom and swapped layouts, the output size and the probe, a VR180 pair ahead and behind, the time of a
+   1920 x 1080 pair). Not tried on a Mac with a real GPU, nor in a built app with mpv's frames.
+
 Not done yet (plan 20-plan-desktop.md, 2.2): the D3D11 device on the adapter Flutter uses. It is not needed on a
 laptop with two GPUs: Flutter's ANGLE, the plugin's device and display and mpv's decoder all take the adapter DXGI
 lists first, which Windows' graphics preference for the app and the runner's NvOptimusEnablement and

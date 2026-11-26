@@ -1,4 +1,5 @@
-/// Immuch360: the calls of the Spatial 2.5D passes drawn by the plugin on Windows (IMMUCH360-NOTE.md, patch 17).
+/// Immuch360: the calls of the Spatial 2.5D passes drawn by the plugin on Windows (IMMUCH360-NOTE.md, patch 17) and
+/// on macOS (patch 18: the same calls, drawn in Metal from the frame mpv drew).
 ///
 /// A stereo video is shown from a viewpoint between its two cameras, which the head of the person in front of the
 /// screen moves (or the mouse, or the arrow keys). mpv draws each frame into renderer C's intermediate texture, as for
