@@ -1,10 +1,11 @@
 // Immuch360 (IMMUCH360-NOTE.md, patch 18): the part of FlutterMacOS's interface the plugin's Swift uses, so that CI
 // type checks the macOS plugin with swiftc alone, without a Flutter app (the example app has no macOS folder). The
-// declarations follow FlutterMacOS's Objective-C headers as Swift imports them. Never shipped.
+// declarations follow FlutterMacOS's Objective-C headers as Swift imports them; like FlutterMacOS, the stub
+// exports Cocoa's modules. Never shipped.
 
-import AppKit
-import CoreVideo
-import Foundation
+@_exported import AppKit
+@_exported import CoreVideo
+@_exported import Foundation
 
 @objc public protocol FlutterTexture: NSObjectProtocol {
   func copyPixelBuffer() -> Unmanaged<CVPixelBuffer>?
