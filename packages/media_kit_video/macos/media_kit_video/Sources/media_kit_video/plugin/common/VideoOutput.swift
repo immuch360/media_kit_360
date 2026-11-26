@@ -326,9 +326,11 @@ public class VideoOutput: NSObject {
     return true
   }
 
-  /// The map of SpatialStats, null when the passes are off
+  /// The map of SpatialStats; with the passes off, only that they are off, as on Windows
   public func spatialStats(probe: Bool) -> [String: Any]? {
-    guard #available(macOS 10.15, *), let spatial = spatialOutput else { return nil }
+    guard #available(macOS 10.15, *), let spatial = spatialOutput else {
+      return ["enabled": false, "spatial": false]
+    }
     if probe {
       // The pixels come with the next draw
       defer { queueRedraw() }
